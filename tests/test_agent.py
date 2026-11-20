@@ -45,7 +45,7 @@ class FakeLLM:
 @pytest.fixture()
 def agent(monkeypatch):
     """Wire a FakeLLM into the agent and return (runner, llm, script holder)."""
-    from jarvis import llm
+    from aegis import llm
 
     holder = {"fake": None, "events": []}
 
@@ -58,7 +58,7 @@ def agent(monkeypatch):
     def run(message, history=None, cfg=None, token="test-token", turn=None):
         holder["events"] = []
         cfg = cfg or {
-            "assistant_name": "Jarvis",
+            "assistant_name": "Aegis",
             "safe_mode": True,
             "llm": {"base_url": "https://api.example/v1", "api_key": "k", "model": "m"},
         }
@@ -89,7 +89,7 @@ def kinds(events):
     ("clipboard", {"action": "set", "text": "x"}),
 ])
 def test_safe_mode_pauses_every_dangerous_tool(agent, tool, args):
-    from jarvis.tools import DANGEROUS_TOOLS
+    from aegis.tools import DANGEROUS_TOOLS
 
     assert tool in DANGEROUS_TOOLS
     agent["factory"]([FakeLLM.tool_call(tool, args)])
@@ -127,7 +127,7 @@ def test_safe_mode_off_runs_the_tool(agent, paths):
         {"role": "assistant", "content": "written"},
     ])
     agent["run"]("write it", cfg={
-        "assistant_name": "Jarvis", "safe_mode": False,
+        "assistant_name": "Aegis", "safe_mode": False,
         "llm": {"base_url": "https://api.example/v1", "api_key": "k", "model": "m"},
     })
     assert marker.exists()
@@ -142,7 +142,7 @@ def test_approval_runs_exactly_once(agent, paths, client):
     http, auth = client
     marker = paths.home / "once.txt"
     agent["factory"]([FakeLLM.tool_call("write_file", {"path": str(marker), "content": "x"})])
-    agent["run"]("write it", token=auth["X-Jarvis-Token"])
+    agent["run"]("write it", token=auth["X-Aegis-Token"])
     approval_id = next(d for t, d in agent["events"] if t == "approval")["approval_id"]
 
     first = http.post("/api/approve", headers=auth, json={"approval_id": approval_id})
@@ -155,7 +155,7 @@ def test_client_cannot_swap_the_command(agent, paths, client):
     http, auth = client
     hostile = paths.home / "hostile.txt"
     agent["factory"]([FakeLLM.tool_call("write_file", {"path": str(paths.home / "ok.txt"), "content": "x"})])
-    agent["run"]("write it", token=auth["X-Jarvis-Token"])
+    agent["run"]("write it", token=auth["X-Aegis-Token"])
     approval_id = next(d for t, d in agent["events"] if t == "approval")["approval_id"]
 
     http.post("/api/approve", headers=auth, json={
@@ -173,7 +173,7 @@ def test_legacy_free_form_approval_is_refused(client):
 
 
 def test_approval_is_bound_to_the_session(agent):
-    from jarvis import approvals
+    from aegis import approvals
 
     item = approvals.register("run_command", {"command": "echo hi"}, "x", "session-a")
     _, error = approvals.redeem(item.id, "session-b")
@@ -183,8 +183,8 @@ def test_approval_is_bound_to_the_session(agent):
 
 
 def test_denied_card_cannot_later_be_approved(client):
-    from jarvis import approvals
-    from jarvis.security import get_token
+    from aegis import approvals
+    from aegis.security import get_token
 
     http, auth = client
     item = approvals.register("run_command", {"command": "echo hi"}, "x", get_token())
@@ -193,7 +193,7 @@ def test_denied_card_cannot_later_be_approved(client):
 
 
 def test_expired_approvals_are_not_redeemable(monkeypatch):
-    from jarvis import approvals
+    from aegis import approvals
 
     item = approvals.register("run_command", {"command": "echo hi"}, "x", "s")
     monkeypatch.setattr(approvals, "APPROVAL_TTL_SECONDS", -1)
@@ -206,7 +206,7 @@ def test_approval_after_execution_resumes_without_rerunning(agent, paths, client
     marker = paths.home / "count.txt"
     command = f"echo x >> {marker}"
     agent["factory"]([FakeLLM.tool_call("run_command", {"command": command})])
-    agent["run"]("run it", token=auth["X-Jarvis-Token"])
+    agent["run"]("run it", token=auth["X-Aegis-Token"])
     approval_id = next(d for t, d in agent["events"] if t == "approval")["approval_id"]
 
     http.post("/api/approve", headers=auth, json={"approval_id": approval_id})
@@ -214,11 +214,11 @@ def test_approval_after_execution_resumes_without_rerunning(agent, paths, client
 
     # the resume notice must not execute the command again
     agent["factory"]([{"role": "assistant", "content": "done"}])
-    agent["run"](f'(approval-result) {{"approval_id": "{approval_id}"}}', token=auth["X-Jarvis-Token"])
+    agent["run"](f'(approval-result) {{"approval_id": "{approval_id}"}}', token=auth["X-Aegis-Token"])
     assert len(marker.read_text(encoding="utf-8").splitlines()) == 1
 
     # ... and a third attempt is refused
-    out = agent["run"](f'(approval-result) {{"approval_id": "{approval_id}"}}', token=auth["X-Jarvis-Token"])
+    out = agent["run"](f'(approval-result) {{"approval_id": "{approval_id}"}}', token=auth["X-Aegis-Token"])
     assert "couldn't be resumed" in out
 
 
@@ -306,7 +306,7 @@ def test_history_is_capped(agent):
 # ---------------------------------------------------------------------------
 
 def test_expired_turn_raises():
-    from jarvis.llm import Turn, TurnCancelled
+    from aegis.llm import Turn, TurnCancelled
 
     turn = Turn(budget=0.01)
     time.sleep(0.02)
@@ -315,7 +315,7 @@ def test_expired_turn_raises():
 
 
 def test_stop_event_cancels_the_turn():
-    from jarvis.llm import Turn, TurnCancelled
+    from aegis.llm import Turn, TurnCancelled
 
     event = threading.Event()
     event.set()
@@ -325,7 +325,7 @@ def test_stop_event_cancels_the_turn():
 
 def test_cancellation_is_not_reported_as_a_model_error(agent):
     """A cancelled turn must propagate, not become "couldn't reach the model"."""
-    from jarvis.llm import TurnCancelled
+    from aegis.llm import TurnCancelled
 
     def cancel_on_first_call(_messages):
         raise TurnCancelled("client left")
@@ -337,7 +337,7 @@ def test_cancellation_is_not_reported_as_a_model_error(agent):
 
 def test_turn_aborts_before_the_next_model_call(agent):
     stop = threading.Event()
-    from jarvis import llm
+    from aegis import llm
 
     fake = agent["factory"]([FakeLLM.tool_call("system_info", {}, "c1")])
     original = fake.complete
@@ -376,13 +376,13 @@ def test_tool_rounds_are_bounded(agent):
 
 
 def llm_max_rounds():
-    from jarvis import llm
+    from aegis import llm
 
     return llm.MAX_TOOL_ROUNDS
 
 
 def test_only_the_latest_screenshot_stays_in_context(agent, monkeypatch):
-    from jarvis import tools
+    from aegis import tools
 
     monkeypatch.setattr(tools, "see_screen", lambda: {"ok": True, "result": "shot", "image": "QUJD" * 50})
     looks = [FakeLLM.tool_call("see_screen", {}, f"c{i}") for i in range(3)]

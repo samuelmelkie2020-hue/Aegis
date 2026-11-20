@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-STATIC = Path(__file__).resolve().parent.parent / "jarvis" / "static"
+STATIC = Path(__file__).resolve().parent.parent / "aegis" / "static"
 
 
 @pytest.fixture()
@@ -41,12 +41,12 @@ def test_every_id_the_script_uses_exists_in_the_markup():
 
 def test_no_token_placeholder_is_served():
     markup = (STATIC / "index.html").read_text(encoding="utf-8")
-    assert "%%JARVIS_TOKEN%%" in markup  # the source has it...
+    assert "%%AEGIS_TOKEN%%" in markup  # the source has it...
     # ...and the server replaces it (checked through the real response below)
 
 
 def test_served_page_has_the_token_substituted(html):
-    assert "%%JARVIS_TOKEN%%" not in html
+    assert "%%AEGIS_TOKEN%%" not in html
 
 
 def test_script_is_loaded_after_config_js(html):

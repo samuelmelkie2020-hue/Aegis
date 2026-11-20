@@ -1,4 +1,4 @@
-"""Configuration for Jarvis. Settings are stored in jarvis_config.json (git-ignored).
+"""Configuration for Aegis. Settings are stored in aegis_config.json (git-ignored).
 
 The file can hold an API key, so this module is careful about it:
 
@@ -23,7 +23,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-log = logging.getLogger("jarvis.config")
+log = logging.getLogger("aegis.config")
 
 # Set when the stored file could not be used, so the UI can say why instead of
 # silently looking like a fresh install. A dict: {"kind", "detail", "backup"}.
@@ -44,7 +44,7 @@ def user_data_dir() -> Path:
     * **From source:** the repository root, as documented — keeps `python
       run.py` behaving exactly as before.
     """
-    override = os.environ.get("JARVIS_DATA_DIR")
+    override = os.environ.get("AEGIS_DATA_DIR")
     if override:
         return Path(override).expanduser()
 
@@ -56,7 +56,7 @@ def user_data_dir() -> Path:
             base = home / "Library" / "Application Support"
         else:  # Linux and friends, XDG
             base = Path(os.environ.get("XDG_CONFIG_HOME") or home / ".config")
-        return base / "Claw"
+        return base / "Aegis"
 
     return Path(__file__).resolve().parent.parent
 
@@ -64,11 +64,11 @@ def user_data_dir() -> Path:
 DATA_DIR = user_data_dir()
 
 CONFIG_PATH = Path(
-    os.environ.get("JARVIS_CONFIG", str(DATA_DIR / "jarvis_config.json"))
+    os.environ.get("AEGIS_CONFIG", str(DATA_DIR / "aegis_config.json"))
 )
 
 DEFAULTS: dict[str, Any] = {
-    "assistant_name": "Jarvis",
+    "assistant_name": "Aegis",
     "llm": {
         # Any OpenAI-compatible endpoint works:
         #   OpenAI     -> https://api.openai.com/v1        (model: gpt-4o-mini / gpt-4o)
@@ -80,7 +80,7 @@ DEFAULTS: dict[str, Any] = {
         "api_key": "",
         "model": "gpt-4o-mini",
     },
-    # When True, Jarvis asks for your approval before acting on the PC
+    # When True, Aegis asks for your approval before acting on the PC
     # (running commands, typing, clicking, opening apps, writing files).
     "safe_mode": True,
     # When True, replies are spoken out loud in the browser.
@@ -133,7 +133,7 @@ def _validate(raw: dict[str, Any], base: dict[str, Any]) -> dict[str, Any]:
     """Return ``base`` with the recognised fields of ``raw`` validated on top."""
     out = dict(base)
     if "assistant_name" in raw:
-        out["assistant_name"] = _as_str(raw["assistant_name"], "assistant_name") or "Jarvis"
+        out["assistant_name"] = _as_str(raw["assistant_name"], "assistant_name") or "Aegis"
     for key in ("safe_mode", "voice_replies"):
         if key in raw:
             out[key] = _as_bool(raw[key], key, default=bool(base.get(key, True)))
@@ -229,7 +229,7 @@ REPLACE_BACKOFF = 0.05
 
 def _atomic_write(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=".jarvis_config.", suffix=".tmp")
+    fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=".aegis_config.", suffix=".tmp")
     try:
         _restrict(tmp)  # before the key is written, not after
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
@@ -347,7 +347,7 @@ def public_config(cfg: dict[str, Any]) -> dict[str, Any]:
     llm = cfg.get("llm") if isinstance(cfg.get("llm"), dict) else {}
     key = llm.get("api_key") or ""
     return {
-        "assistant_name": cfg.get("assistant_name") or "Jarvis",
+        "assistant_name": cfg.get("assistant_name") or "Aegis",
         "safe_mode": bool(cfg.get("safe_mode", True)),
         "voice_replies": bool(cfg.get("voice_replies", True)),
         "llm": {

@@ -23,7 +23,7 @@ def parse_sse(text: str) -> list[dict]:
 @pytest.fixture()
 def scripted(monkeypatch):
     """Replace the agent with a scripted emitter."""
-    from jarvis import server
+    from aegis import server
 
     state = {"emit": None, "outcome": None}
 
@@ -108,7 +108,7 @@ def test_streaming_response_headers(client, scripted):
 
 def test_heartbeat_keeps_a_slow_turn_alive(client, monkeypatch):
     """No bytes for minutes is exactly what proxies drop."""
-    from jarvis import server
+    from aegis import server
 
     monkeypatch.setattr(server, "HEARTBEAT_SECONDS", 0.1)
 
@@ -126,7 +126,7 @@ def test_heartbeat_keeps_a_slow_turn_alive(client, monkeypatch):
 
 def test_queue_is_bounded(monkeypatch):
     """An abandoned turn must not grow memory without limit."""
-    from jarvis import server
+    from aegis import server
 
     assert server.MAX_QUEUE_ITEMS > 0
     assert server.QUEUE_PUT_TIMEOUT > 0
@@ -134,7 +134,7 @@ def test_queue_is_bounded(monkeypatch):
 
 def test_a_worker_that_dies_still_terminates_the_stream(client, monkeypatch):
     """A broken agent must close the stream, not hang the browser forever."""
-    from jarvis import server
+    from aegis import server
 
     def explode(*args, **kwargs):
         raise ValueError("internal")

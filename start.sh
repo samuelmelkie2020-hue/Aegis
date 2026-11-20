@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Claw / Jarvis — one-click starter for macOS and Linux
+# Aegis — one-click starter for macOS and Linux
 set -euo pipefail
 
 cd "$(dirname "$0")"
 
-PORT="${JARVIS_PORT:-8000}"
+PORT="${AEGIS_PORT:-8000}"
 URL="http://localhost:${PORT}/"
 
 if ! command -v python3 >/dev/null 2>&1; then
@@ -25,7 +25,7 @@ source .venv/bin/activate
 DEPS_HASH="$(python -c "import hashlib,sys;print(hashlib.sha256(open('requirements.txt','rb').read()).hexdigest())")"
 STAMP_FILE=".venv/.deps_hash"
 if [ ! -f "$STAMP_FILE" ] || [ "$(cat "$STAMP_FILE" 2>/dev/null || true)" != "$DEPS_HASH" ]; then
-  echo "Installing Jarvis components, one moment..."
+  echo "Installing Aegis components, one moment..."
   python -m pip install --upgrade pip >/dev/null 2>&1 || true
   python -m pip install -r requirements.txt || {
     echo
@@ -37,7 +37,7 @@ fi
 
 echo
 echo "  =========================================="
-echo "   Claw is starting as a desktop app."
+echo "   Aegis is starting as a desktop app."
 echo "   Close the window to quit."
 echo "   (Browser instead: bash start.sh --web)"
 echo "  =========================================="

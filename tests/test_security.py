@@ -1,6 +1,6 @@
 """Access control: the token, the Host check, and the session cookie.
 
-These are the tests that matter most. Jarvis can run shell commands, so every
+These are the tests that matter most. Aegis can run shell commands, so every
 one of these represents "a stranger on the network can control this PC".
 """
 
@@ -58,7 +58,7 @@ def test_token_works_as_a_header(client):
     sys.platform.startswith("win"), reason="windows protects the token with an ACL, not mode bits"
 )
 def test_token_file_is_owner_only(client, paths):
-    from jarvis.security import get_token
+    from aegis.security import get_token
 
     get_token()
     mode = stat.S_IMODE(os.stat(paths.token).st_mode)
@@ -67,12 +67,12 @@ def test_token_file_is_owner_only(client, paths):
 
 def test_token_file_is_restricted_on_creation(paths, monkeypatch):
     """Every platform must lock the token down, by whichever mechanism it has."""
-    from jarvis import config, security
+    from aegis import config, security
 
     restricted = []
     monkeypatch.setattr(config, "_restrict", lambda path: restricted.append(str(path)))
     monkeypatch.setattr(security, "TOKEN_FILE", paths.token.parent / "fresh_token")
-    monkeypatch.delenv("JARVIS_TOKEN", raising=False)
+    monkeypatch.delenv("AEGIS_TOKEN", raising=False)
 
     token = security.get_token()
 
@@ -80,7 +80,7 @@ def test_token_file_is_restricted_on_creation(paths, monkeypatch):
 
 
 def test_token_is_stable_across_calls(paths):
-    from jarvis.security import get_token
+    from aegis.security import get_token
 
     first = get_token()
     assert get_token() == first
@@ -88,19 +88,19 @@ def test_token_is_stable_across_calls(paths):
 
 
 def test_env_token_override_is_honoured(sandbox, monkeypatch):
-    from jarvis.security import get_token
+    from aegis.security import get_token
 
-    monkeypatch.setenv("JARVIS_TOKEN", "fixed-token-for-tests")
+    monkeypatch.setenv("AEGIS_TOKEN", "fixed-token-for-tests")
     assert get_token() == "fixed-token-for-tests"
 
 
 def test_access_link_sets_an_httponly_cookie(anon, auth):
-    token = auth["X-Jarvis-Token"]
+    token = auth["X-Aegis-Token"]
     response = anon.get(f"/?token={token}", headers={"Host": "localhost:8000"}, follow_redirects=False)
     assert response.status_code == 303
     assert response.headers["location"] == "/"
     cookie = response.headers["set-cookie"].lower()
-    assert "jarvis_session=" in cookie
+    assert "aegis_session=" in cookie
     assert "httponly" in cookie
     assert "samesite=strict" in cookie
 
@@ -117,20 +117,20 @@ def test_loopback_visit_is_trusted_enough_to_mint_a_session(anon):
     came from localhost — the link only matters for a non-loopback host.
     """
     response = anon.get("/", headers={"Host": "localhost:8000"})
-    assert "jarvis_session" in response.cookies
+    assert "aegis_session" in response.cookies
 
 
 def test_non_loopback_visit_does_not_mint_a_session(anon):
     """A remote caller gets no cookie unless it presents the real token."""
     response = anon.get("/", headers={"Host": "192.168.1.50:8000"})
-    assert "jarvis_session" not in response.cookies
+    assert "aegis_session" not in response.cookies
     # ... and its screenshot/API calls stay locked
     assert anon.get("/api/health", headers={"Host": "192.168.1.50:8000"}).status_code == 401
 
 
 @pytest.mark.parametrize(
     "host",
-    ["evil.example.com", "attacker.test:8000", "claw.evil-mirror.io"],
+    ["evil.example.com", "attacker.test:8000", "aegis.evil-mirror.io"],
 )
 def test_dns_rebinding_hosts_are_rejected(client, host):
     http, auth = client
@@ -146,8 +146,8 @@ def test_local_and_private_hosts_are_accepted(client, host):
 
 def test_allowed_hosts_env_extends_the_list(client, monkeypatch):
     http, auth = client
-    monkeypatch.setenv("JARVIS_ALLOWED_HOSTS", "jarvis.lan")
-    assert http.get("/api/health", headers={**auth, "Host": "jarvis.lan:8000"}).status_code == 200
+    monkeypatch.setenv("AEGIS_ALLOWED_HOSTS", "aegis.lan")
+    assert http.get("/api/health", headers={**auth, "Host": "aegis.lan:8000"}).status_code == 200
 
 
 def test_cross_origin_post_is_rejected(client):
@@ -174,25 +174,25 @@ def test_cross_site_subresource_cannot_read_the_token(anon):
         "/config.js",
         headers={"Host": "localhost:8000", "Sec-Fetch-Site": "cross-site"},
     )
-    assert 'window.JARVIS_TOKEN = ""' in response.text
+    assert 'window.AEGIS_TOKEN = ""' in response.text
 
 
 def test_config_js_serves_the_token_to_localhost(anon):
     response = anon.get(
         "/config.js", headers={"Host": "localhost:8000", "Sec-Fetch-Site": "same-origin"}
     )
-    assert 'window.JARVIS_TOKEN = ""' not in response.text
-    assert "window.JARVIS_TOKEN = \"" in response.text
+    assert 'window.AEGIS_TOKEN = ""' not in response.text
+    assert "window.AEGIS_TOKEN = \"" in response.text
 
 
 def test_unknown_host_never_receives_the_token(anon):
     response = anon.get("/config.js", headers={"Host": "random.example.com", "Sec-Fetch-Site": "none"})
-    assert 'window.JARVIS_TOKEN = ""' in response.text
+    assert 'window.AEGIS_TOKEN = ""' in response.text
 
 
 def test_preview_host_is_supported_for_embedding(anon):
     response = anon.get("/config.js", headers={"Host": "8000-abc123.e2b.app", "Sec-Fetch-Site": "none"})
-    assert 'window.JARVIS_TOKEN = ""' not in response.text
+    assert 'window.AEGIS_TOKEN = ""' not in response.text
 
 
 def test_static_assets_stay_public(anon):

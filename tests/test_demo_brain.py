@@ -8,12 +8,12 @@ from __future__ import annotations
 
 import pytest
 
-DEMO_CFG = {"assistant_name": "Jarvis", "safe_mode": False, "llm": {"api_key": ""}}
+DEMO_CFG = {"assistant_name": "Aegis", "safe_mode": False, "llm": {"api_key": ""}}
 
 
 @pytest.fixture()
 def demo(monkeypatch):
-    from jarvis import llm, tools
+    from aegis import llm, tools
 
     calls = []
 
@@ -108,7 +108,7 @@ def test_demo_mode_asks_for_approval_when_safe_mode_is_on(demo):
 
 
 def test_demo_mode_matches_the_api_decision(paths):
-    from jarvis import config, llm
+    from aegis import config, llm
 
     config.save_config({"llm": {"api_key": "", "base_url": "https://api.openai.com/v1"}})
     assert config.is_demo_mode(config.load_config()) is True

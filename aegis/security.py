@@ -1,14 +1,14 @@
-"""Access control for the local Jarvis server.
+"""Access control for the local Aegis server.
 
-Jarvis can run shell commands and read files, so the HTTP surface is only
+Aegis can run shell commands and read files, so the HTTP surface is only
 reachable by someone who is meant to use it. Three cheap, independent checks
 do that:
 
 1. **Bind localhost by default.** ``run.py`` listens on 127.0.0.1 unless
-   ``JARVIS_HOST`` says otherwise, so the LAN cannot reach the port at all.
-2. **A shared secret.** A random token (``.jarvis_token`` next to the config,
-   or ``JARVIS_TOKEN``) is required on every ``/api`` call, either as a
-   session cookie or as the ``X-Jarvis-Token`` header. Local programs and
+   ``AEGIS_HOST`` says otherwise, so the LAN cannot reach the port at all.
+2. **A shared secret.** A random token (``.aegis_token`` next to the config,
+   or ``AEGIS_TOKEN``) is required on every ``/api`` call, either as a
+   session cookie or as the ``X-Aegis-Token`` header. Local programs and
    other users on the machine cannot guess it.
 3. **Host + Origin validation.** A page on ``evil.com`` whose DNS is rebound to
    127.0.0.1 still sends ``Host: evil.com``; that is rejected. State-changing
@@ -33,11 +33,11 @@ from fastapi import HTTPException, Request, status
 
 from .config import CONFIG_PATH
 
-log = logging.getLogger("jarvis.security")
+log = logging.getLogger("aegis.security")
 
-SESSION_COOKIE = "jarvis_session"
-TOKEN_HEADER = "x-jarvis-token"
-TOKEN_FILE = Path(os.environ.get("JARVIS_TOKEN_FILE") or CONFIG_PATH.parent / ".jarvis_token")
+SESSION_COOKIE = "aegis_session"
+TOKEN_HEADER = "x-aegis-token"
+TOKEN_FILE = Path(os.environ.get("AEGIS_TOKEN_FILE") or CONFIG_PATH.parent / ".aegis_token")
 
 LOOPBACK_NAMES = {"localhost", "127.0.0.1", "::1"}
 LOOPBACK_BINDS = {"127.0.0.1", "localhost", "::1"}
@@ -46,7 +46,7 @@ LOOPBACK_BINDS = {"127.0.0.1", "localhost", "::1"}
 # app usable inside a hosted preview sandbox (which is single-user by design)
 # without opening the door to arbitrary public host names.
 PREVIEW_HOST_SUFFIXES: tuple[str, ...] = tuple(
-    s for s in os.environ.get("JARVIS_PREVIEW_HOST_SUFFIXES", ".e2b.app").split(",") if s.strip()
+    s for s in os.environ.get("AEGIS_PREVIEW_HOST_SUFFIXES", ".e2b.app").split(",") if s.strip()
 )
 
 SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
@@ -58,7 +58,7 @@ SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
 
 def get_token() -> str:
     """The shared secret, created on first use and persisted next to the config."""
-    env = os.environ.get("JARVIS_TOKEN")
+    env = os.environ.get("AEGIS_TOKEN")
     if env:
         return env
     try:
@@ -93,7 +93,7 @@ def token_matches(candidate: str | None) -> bool:
 # ---------------------------------------------------------------------------
 
 def is_loopback_bind(host: str | None = None) -> bool:
-    return (host or os.environ.get("JARVIS_HOST", "127.0.0.1")).strip() in LOOPBACK_BINDS
+    return (host or os.environ.get("AEGIS_HOST", "127.0.0.1")).strip() in LOOPBACK_BINDS
 
 
 def embed_token() -> bool:
@@ -103,7 +103,7 @@ def embed_token() -> bool:
     are processes on this machine, and asking the user to copy a token would be
     pure friction. Explicitly overridable for unusual setups.
     """
-    forced = os.environ.get("JARVIS_EMBED_TOKEN")
+    forced = os.environ.get("AEGIS_EMBED_TOKEN")
     if forced is not None:
         return forced.strip().lower() in {"1", "true", "yes", "on"}
     return is_loopback_bind()
@@ -130,7 +130,7 @@ def embed_token_for(host_header: str) -> bool:
       unopenable there.
     * anything else  — no token in the page. Use the URL the terminal printed.
     """
-    forced = os.environ.get("JARVIS_EMBED_TOKEN")
+    forced = os.environ.get("AEGIS_EMBED_TOKEN")
     if forced is not None:
         return forced.strip().lower() in {"1", "true", "yes", "on"}
     if _hostname(host_header) in LOOPBACK_NAMES:
@@ -152,7 +152,7 @@ def _hostname(host_header: str) -> str:
 
 def host_allowed(host_header: str) -> bool:
     """Reject Host headers that a DNS-rebinding attack would have to use."""
-    if os.environ.get("JARVIS_ALLOWED_HOSTS", "").strip() == "*":
+    if os.environ.get("AEGIS_ALLOWED_HOSTS", "").strip() == "*":
         return True
     name = _hostname(host_header)
     if not name:
@@ -161,7 +161,7 @@ def host_allowed(host_header: str) -> bool:
         return True
     extra = {
         h.strip().lower()
-        for h in os.environ.get("JARVIS_ALLOWED_HOSTS", "").split(",")
+        for h in os.environ.get("AEGIS_ALLOWED_HOSTS", "").split(",")
         if h.strip()
     }
     if name in extra:
@@ -197,7 +197,7 @@ def require_session(request: Request) -> None:
             status_code=status.HTTP_403_FORBIDDEN,
             detail=(
                 "Request rejected: unexpected Host header. Add this host name to "
-                "JARVIS_ALLOWED_HOSTS if you really serve the app from it."
+                "AEGIS_ALLOWED_HOSTS if you really serve the app from it."
             ),
         )
 
@@ -214,7 +214,7 @@ def require_session(request: Request) -> None:
     raise HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail=(
-            "Locked. Open the URL printed in the Jarvis terminal (it contains your "
+            "Locked. Open the URL printed in the Aegis terminal (it contains your "
             f"access token), or paste the contents of {TOKEN_FILE}."
         ),
     )
@@ -224,7 +224,7 @@ def require_session(request: Request) -> None:
 # Page rendering
 # ---------------------------------------------------------------------------
 
-PAGE_TOKEN_PLACEHOLDER = "%%JARVIS_TOKEN%%"
+PAGE_TOKEN_PLACEHOLDER = "%%AEGIS_TOKEN%%"
 
 
 def embed_token_for_request(request: Any) -> bool:

@@ -1,6 +1,6 @@
-# 🦞 Claw — Your own Jarvis for the PC
+# 🛡 Aegis — your own AI assistant for the PC
 
-A personal AI assistant that can **see your screen** and **control your computer** — like Jarvis.
+A personal AI assistant that can **see your screen** and **control your computer** — like a JARVIS.
 
 Ask it in plain English (or by voice) and it will look at your screen, run commands, open apps, type, click, manage files and report system status.
 
@@ -31,13 +31,13 @@ Grab the build for your OS from **[Releases](https://github.com/samuelmelkie2020
 
 | OS | File | Then |
 |---|---|---|
-| **Windows** | `Claw-windows.zip` | Unzip → double-click **`Claw.exe`** |
-| **macOS** | `Claw-macos.zip` | Unzip → drag **`Claw.app`** to Applications → open it |
-| **Linux** | `Claw-linux.zip` | Unzip → `chmod +x Claw` → run `./Claw` |
+| **Windows** | `Aegis-windows.zip` | Unzip → double-click **`Aegis.exe`** |
+| **macOS** | `Aegis-macos.zip` | Unzip → drag **`Aegis.app`** to Applications → open it |
+| **Linux** | `Aegis-linux.zip` | Unzip → `chmod +x Aegis` → run `./Aegis` |
 
-No Python, no terminal, no browser tab. Claw opens in **its own window**, and that window *is* the app. 🎉
+No Python, no terminal, no browser tab. Aegis opens in **its own window**, and that window *is* the app. 🎉
 
-> **First launch on macOS:** the builds are unsigned, so Gatekeeper will complain. Right-click the app → **Open** → **Open**, or run `xattr -dr com.apple.quarantine /Applications/Claw.app`. You only do this once.
+> **First launch on macOS:** the builds are unsigned, so Gatekeeper will complain. Right-click the app → **Open** → **Open**, or run `xattr -dr com.apple.quarantine /Applications/Aegis.app`. You only do this once.
 >
 > **First launch on Windows:** SmartScreen may show *"Windows protected your PC"* — click **More info** → **Run anyway**.
 
@@ -47,7 +47,7 @@ Requires **Python 3.10+** (3.11 or newer recommended).
 
 ```bash
 git clone https://github.com/samuelmelkie2020-hue/claw.git
-cd claw
+cd aegis
 
 python -m venv .venv
 source .venv/bin/activate        # Windows: .venv\Scripts\activate
@@ -95,9 +95,9 @@ Click **⚙️ Settings** in the app and fill in any OpenAI-compatible provider:
 | **OpenRouter** | `https://openrouter.ai/api/v1` | `openai/gpt-4o-mini` |
 | **Ollama (local, free)** | `http://localhost:11434/v1` | `llama3.2-vision` |
 
-Paste your API key and **Save**. Use a **vision-capable model** so Jarvis can see your screen.
+Paste your API key and **Save**. Use a **vision-capable model** so Aegis can see your screen.
 
-> 🔑 Your key is stored only on your machine — `jarvis_config.json` in the app's data folder (**Windows** `%APPDATA%\Claw`, **macOS** `~/Library/Application Support/Claw`, **Linux** `~/.config/Claw`; the repo folder when running from source — override with `JARVIS_DATA_DIR`) (git-ignored, `chmod 600`) and is never sent back to the browser.
+> 🔑 Your key is stored only on your machine — `aegis_config.json` in the app's data folder (**Windows** `%APPDATA%\Aegis`, **macOS** `~/Library/Application Support/Aegis`, **Linux** `~/.config/Aegis`; the repo folder when running from source — override with `AEGIS_DATA_DIR`) (git-ignored, `chmod 600`) and is never sent back to the browser.
 
 ---
 
@@ -123,41 +123,41 @@ How is my PC doing?
 
 ## 🛡 Safety
 
-- **Ask before acting** (safe mode) is ON by default: Jarvis pauses before running commands, opening apps, typing, clicking or writing files, and shows an **Approve / Deny** card. Turn it off only on machines you fully trust it with.
-- **Safe mode cannot be disabled by a browser.** It is read from `jarvis_config.json` on every turn; the page can only *save* a new value, and only through an authenticated request.
+- **Ask before acting** (safe mode) is ON by default: Aegis pauses before running commands, opening apps, typing, clicking or writing files, and shows an **Approve / Deny** card. Turn it off only on machines you fully trust it with.
+- **Safe mode cannot be disabled by a browser.** It is read from `aegis_config.json` on every turn; the page can only *save* a new value, and only through an authenticated request.
 - It refuses destructive commands (deleting system files, formatting disks…) unless you explicitly ask.
 - **Localhost only by default.** The server binds to `127.0.0.1`, so it is not reachable from your network.
-- **Every `/api` call needs an access token.** Claw runs commands and reads files, so the API is not open. A random token is generated on first run and stored in `.jarvis_token` (next to your config, `chmod 600`). The desktop window loads `http://127.0.0.1:<port>/?token=…` once and the page trades it for an HttpOnly session cookie; in `--web` mode the terminal prints that URL for you to open.
+- **Every `/api` call needs an access token.** Aegis runs commands and reads files, so the API is not open. A random token is generated on first run and stored in `.aegis_token` (next to your config, `chmod 600`). The desktop window loads `http://127.0.0.1:<port>/?token=…` once and the page trades it for an HttpOnly session cookie; in `--web` mode the terminal prints that URL for you to open.
 - **Your API key never leaves the server.** The Settings dialog shows only whether a key is saved, plus a masked hint (`sk-…1234`). Leaving the key field blank keeps the saved key; tick **Forget the saved key** to delete it.
 - Requests whose `Host` header is not this machine are rejected, which blocks DNS-rebinding attacks from a web page you happen to visit.
 
-### What Jarvis will not do
+### What Aegis will not do
 
-- **Read your credentials.** `~/.ssh`, `~/.aws`, `~/.gnupg`, `.env` files, private keys, `.netrc`, and Jarvis's own config/token are refused by the file tools, whichever way the path is spelled (symlinks are resolved first). Reads outside your home folder are refused too.
+- **Read your credentials.** `~/.ssh`, `~/.aws`, `~/.gnupg`, `.env` files, private keys, `.netrc`, and Aegis's own config/token are refused by the file tools, whichever way the path is spelled (symlinks are resolved first). Reads outside your home folder are refused too.
 - **Write outside your home folder** — and never to its own config or an `authorized_keys`-style file.
 - **Repeat a credential into the model.** Anything that looks like a key, token, PEM block, or a password inside a URL is masked (`sk-abc… [redacted]`) before tool output reaches the AI provider.
 - **Run an approved action twice.** Approvals live on the server, are bound to your session, expire after 5 minutes, and are consumed on use. The page only ever sends the approval *id*; it cannot change the command.
 - **Be nudged into clicking the wrong thing.** Screenshots are downscaled for the model, and `click` maps the coordinates back to your real screen (and refuses points outside it).
 - **Hang or run away.** A turn has a 5-minute budget; if you close the tab, the agent stops at its next step instead of working on into the void. Tool results are capped, searches are bounded, and only the newest screenshot is kept in context.
-- **Lose your settings silently.** A settings file that cannot be parsed is moved aside (`jarvis_config.json.corrupt-<timestamp>`) and reported in the app, rather than quietly reset to defaults and overwritten.
+- **Lose your settings silently.** A settings file that cannot be parsed is moved aside (`aegis_config.json.corrupt-<timestamp>`) and reported in the app, rather than quietly reset to defaults and overwritten.
 
 ### If you really want it on your LAN
 
 ```bash
-JARVIS_HOST=0.0.0.0 JARVIS_ALLOWED_HOSTS=192.168.1.50 python run.py --web
+AEGIS_HOST=0.0.0.0 AEGIS_ALLOWED_HOSTS=192.168.1.50 python run.py --web
 ```
 
-The token is still required, so only devices that can read the URL (or the `.jarvis_token` file) can control the PC. Add your host or IP to `JARVIS_ALLOWED_HOSTS`, otherwise the `Host` check rejects it. Only do this on a network you trust.
+The token is still required, so only devices that can read the URL (or the `.aegis_token` file) can control the PC. Add your host or IP to `AEGIS_ALLOWED_HOSTS`, otherwise the `Host` check rejects it. Only do this on a network you trust.
 
 ---
 
 ## ⚙️ Configuration
 
-Everything is editable in the app's Settings. Power users can edit `jarvis_config.json` directly:
+Everything is editable in the app's Settings. Power users can edit `aegis_config.json` directly:
 
 ```json
 {
-  "assistant_name": "Jarvis",
+  "assistant_name": "Aegis",
   "llm": {
     "base_url": "https://api.openai.com/v1",
     "api_key": "sk-...",
@@ -172,17 +172,17 @@ Environment variables:
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `JARVIS_PORT` | `8000` | Port to serve on |
-| `JARVIS_HOST` | `127.0.0.1` | Bind address. `0.0.0.0` exposes it on your network (token still required) |
-| `JARVIS_CONFIG` | `./jarvis_config.json` | Path to the config file |
-| `JARVIS_TOKEN` | *(generated)* | Use a fixed access token instead of `.jarvis_token` |
-| `JARVIS_TOKEN_FILE` | `./.jarvis_token` | Where the generated token is stored |
-| `JARVIS_ALLOWED_HOSTS` | *(loopback + preview)* | Comma-separated extra `Host` values to accept |
-| `JARVIS_EMBED_TOKEN` | `true` on localhost | Force embedding (or not embedding) the token in the served page |
-| `JARVIS_NO_GUI_ERRORS` | off | `1` skips the crash window and only writes `claw-crash.log` (used by CI and headless machines) |
-| `JARVIS_DATA_DIR` | platform data folder | Where the config, token and clapboard files live (ignored when `JARVIS_CONFIG` is set) |
-| `JARVIS_ALLOW_READ_OUTSIDE_HOME` | off | `1` lets the file tools read outside your home folder (credentials stay blocked) |
-| `JARVIS_ALLOW_WRITE_OUTSIDE_HOME` | off | `1` lets `write_file` write outside your home folder (config and tokens stay blocked) |
+| `AEGIS_PORT` | `8000` | Port to serve on |
+| `AEGIS_HOST` | `127.0.0.1` | Bind address. `0.0.0.0` exposes it on your network (token still required) |
+| `AEGIS_CONFIG` | `./aegis_config.json` | Path to the config file |
+| `AEGIS_TOKEN` | *(generated)* | Use a fixed access token instead of `.aegis_token` |
+| `AEGIS_TOKEN_FILE` | `./.aegis_token` | Where the generated token is stored |
+| `AEGIS_ALLOWED_HOSTS` | *(loopback + preview)* | Comma-separated extra `Host` values to accept |
+| `AEGIS_EMBED_TOKEN` | `true` on localhost | Force embedding (or not embedding) the token in the served page |
+| `AEGIS_NO_GUI_ERRORS` | off | `1` skips the crash window and only writes `aegis-crash.log` (used by CI and headless machines) |
+| `AEGIS_DATA_DIR` | platform data folder | Where the config, token and clapboard files live (ignored when `AEGIS_CONFIG` is set) |
+| `AEGIS_ALLOW_READ_OUTSIDE_HOME` | off | `1` lets the file tools read outside your home folder (credentials stay blocked) |
+| `AEGIS_ALLOW_WRITE_OUTSIDE_HOME` | off | `1` lets `write_file` write outside your home folder (config and tokens stay blocked) |
 
 ---
 
@@ -193,11 +193,11 @@ pip install -r requirements-dev.txt   # runtime deps + pytest + ruff
 python -m pytest -q                   # 209 tests, ~3s, no display or API key needed
 ruff check .                          # lint (config lives in pyproject.toml)
 python run.py --self-check            # diagnose a machine: data dir, server, webview
-node --check jarvis/static/app.js     # front-end syntax
+node --check aegis/static/app.js     # front-end syntax
 ```
 
 The suite runs headless: it redirects `HOME`, the config file and the token file
-to a temp directory before any `jarvis` module is imported, so it can never
+to a temp directory before any `aegis` module is imported, so it can never
 touch your real settings, and it fakes the display, the model and the mouse.
 CI runs the tests on 3.10–3.12 plus lint and a JS syntax check (`.github/workflows/ci.yml`).
 A second workflow (`.github/workflows/desktop.yml`) freezes the app with PyInstaller on
@@ -211,12 +211,12 @@ is hardcoded to `localhost` (which would break behind the preview proxy).
 
 | Area | Where |
 |---|---|
-| Access control (token, Host/Origin) | `jarvis/security.py`, `tests/test_security.py` |
-| Settings validation + secret masking | `jarvis/config.py`, `tests/test_config.py` |
-| Path policy + redaction | `jarvis/safety.py`, `tests/test_tools.py` |
-| Agent loop, safe mode, approvals | `jarvis/llm.py`, `jarvis/approvals.py`, `tests/test_agent.py` |
-| SSE contract | `jarvis/server.py`, `tests/test_streaming.py` |
-| Desktop shell, port/server lifecycle, packaging | `jarvis/desktop.py`, `packaging/claw.spec`, `tests/test_desktop.py` |
+| Access control (token, Host/Origin) | `aegis/security.py`, `tests/test_security.py` |
+| Settings validation + secret masking | `aegis/config.py`, `tests/test_config.py` |
+| Path policy + redaction | `aegis/safety.py`, `tests/test_tools.py` |
+| Agent loop, safe mode, approvals | `aegis/llm.py`, `aegis/approvals.py`, `tests/test_agent.py` |
+| SSE contract | `aegis/server.py`, `tests/test_streaming.py` |
+| Desktop shell, port/server lifecycle, packaging | `aegis/desktop.py`, `packaging/aegis.spec`, `tests/test_desktop.py` |
 
 ### Building the desktop app yourself
 
@@ -225,9 +225,9 @@ pip install -r requirements-dev.txt pyinstaller
 bash packaging/build.sh          # Windows: packaging\build.ps1
 ```
 
-The result lands in `dist/` — `Claw.exe`, `Claw.app`, or a `Claw` binary. The spec is
-`packaging/claw.spec`: one-file, windowed (no console), with `jarvis/static` bundled.
-Always run `dist/Claw --self-check` after freezing — a build that works from source but
+The result lands in `dist/` — `Aegis.exe`, `Aegis.app`, or a `Aegis` binary. The spec is
+`packaging/aegis.spec`: one-file, windowed (no console), with `aegis/static` bundled.
+Always run `dist/Aegis --self-check` after freezing — a build that works from source but
 not frozen is the most common packaging failure.
 
 ## 🧩 How it works
@@ -253,7 +253,7 @@ not frozen is the most common packaging failure.
 ```
 
 0. `run.py` picks a free port, starts uvicorn on `127.0.0.1` in a background thread, then
-   hands that URL to a native window via **pywebview** (`jarvis/desktop.py`). The web UI in
+   hands that URL to a native window via **pywebview** (`aegis/desktop.py`). The web UI in
    that window is the same one `--web` serves; it talks to the server over loopback, so no
    code is duplicated between the desktop and browser versions.
 1. You ask something (text or voice). The request carries only your message and the conversation — never settings.
@@ -285,7 +285,7 @@ Without an API key, a built-in **demo brain** handles simple intents so you can 
 ## 🖥 Platform notes
 
 - **Windows** — fully supported. If typing/shortcuts don't land, run the terminal as your user (not as a service) and give Python accessibility permissions.
-- **macOS** — grant **Screen Recording** + **Accessibility** permissions to **Claw** (or your terminal,
+- **macOS** — grant **Screen Recording** + **Accessibility** permissions to **Aegis** (or your terminal,
   when running from source) in *System Settings → Privacy & Security*, or screenshots/typing will be blocked.
 - **Linux** — needs `WebKitGTK` for the desktop window (`libwebkit2gtk-4.1-0`, plus `python3-gi`) and
   an X11/Wayland session with `xdg-utils` for opening apps. If the webview is missing, `start.sh`
@@ -299,19 +299,19 @@ Without an API key, a built-in **demo brain** handles simple intents so you can 
 
 | Problem | Fix |
 |---|---|
-| *"Could not open requirements file"* | You are not in the `claw` folder — run `cd claw` first, or use **start.bat** (it handles everything). |
-| *"TLS/SSL connection has been closed"* / can't reach the AI model | Your network is blocking the AI provider (not your key). Press **🔌 Test connection** in Settings; try another Provider, a VPN, or Ollama (local). If you're chatting inside the Arena **preview**: that sandbox is always blocked from AI sites — run Jarvis on your own PC. |
+| *"Could not open requirements file"* | You are not in the `aegis` folder — run `cd aegis` first, or use **start.bat** (it handles everything). |
+| *"TLS/SSL connection has been closed"* / can't reach the AI model | Your network is blocking the AI provider (not your key). Press **🔌 Test connection** in Settings; try another Provider, a VPN, or Ollama (local). If you're chatting inside the Arena **preview**: that sandbox is always blocked from AI sites — run Aegis on your own PC. |
 | "Screen capture unavailable" | Run it on a machine with a real display; on macOS grant Screen Recording permission. |
 | Mic button says unsupported | Voice input needs Chrome or Edge (Web Speech API). |
 | "I couldn't reach the AI model" | Check base URL / key / model in ⚙️ Settings. Ollama users: make sure `ollama serve` is running and you `ollama pull llama3.2-vision`. |
-| Jarvis acts but nothing types | Focus the window you want to type into — typing goes to whatever is focused. |
-| Port already in use | `python run.py --port 8080` (or `JARVIS_PORT=8080`) — the starters honour it too |
+| Aegis acts but nothing types | Focus the window you want to type into — typing goes to whatever is focused. |
+| Port already in use | `python run.py --port 8080` (or `AEGIS_PORT=8080`) — the starters honour it too |
 | *"No module named webview"* | `pip install pywebview`; on Linux also install WebKitGTK. Or run `python run.py --web` |
-| Desktop window is blank / white | Check `claw-crash.log` in the data folder; run `python run.py --self-check` and retry with `--debug` |
-| Desktop app won't start at all (Windows) | `claw-crash.log` sits next to the exe's data folder (`%APPDATA%\Claw`); the message box shows the reason |
-| macOS says the app is damaged / from an unidentified developer | It is unsigned: right-click → **Open**, or `xattr -dr com.apple.quarantine /Applications/Claw.app` |
-| Where are my settings? | `--self-check` prints the data folder: `%APPDATA%\Claw`, `~/Library/Application Support/Claw` or `~/.config/Claw` |
+| Desktop window is blank / white | Check `aegis-crash.log` in the data folder; run `python run.py --self-check` and retry with `--debug` |
+| Desktop app won't start at all (Windows) | `aegis-crash.log` sits next to the exe's data folder (`%APPDATA%\Aegis`); the message box shows the reason |
+| macOS says the app is damaged / from an unidentified developer | It is unsigned: right-click → **Open**, or `xattr -dr com.apple.quarantine /Applications/Aegis.app` |
+| Where are my settings? | `--self-check` prints the data folder: `%APPDATA%\Aegis`, `~/Library/Application Support/Aegis` or `~/.config/Aegis` |
 
 ---
 
-Made with 🦞 — your friendly neighborhood claw.
+Made with 🛡 — Aegis.

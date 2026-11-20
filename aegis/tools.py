@@ -1,4 +1,4 @@
-"""Tools that let Jarvis see and control the PC.
+"""Tools that let Aegis see and control the PC.
 
 Everything is guarded so the server also runs on machines without a display
 (e.g. during development) — in that case tools return friendly errors or a
@@ -260,7 +260,7 @@ def _placeholder_image(message: str) -> str:
     for ln in lines[:8]:
         draw.text((80, y), ln, fill=(160, 220, 245))
         y += 28
-    draw.text((80, 470), "Claw / Jarvis — screen capture", fill=(90, 130, 160))
+    draw.text((80, 470), "Aegis — screen capture", fill=(90, 130, 160))
     buf = io.BytesIO()
     img.save(buf, "PNG")
     return base64.b64encode(buf.getvalue()).decode()
@@ -602,7 +602,7 @@ def clipboard(action: str, text: str | None = None) -> dict[str, Any]:
 def execute_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
     """Run a tool by name and return ``{ok, result, [image, …]}``.
 
-    Every result passes through :func:`jarvis.safety.redact_result` on the way
+    Every result passes through :func:`aegis.safety.redact_result` on the way
     out, so credential-shaped text can never reach the model (or the browser)
     just because a command happened to print it.
     """

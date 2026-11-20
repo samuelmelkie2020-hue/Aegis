@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Start Claw.
+"""Start Aegis.
 
     python run.py            # desktop window (default)
     python run.py --web      # browser version, prints a token URL
@@ -7,7 +7,7 @@
     python run.py --port 8080
 
 The desktop shell runs the same server on loopback and shows it in a native
-window, so nothing about the app is duplicated — see jarvis/desktop.py.
+window, so nothing about the app is duplicated — see aegis/desktop.py.
 """
 
 from __future__ import annotations
@@ -20,9 +20,9 @@ import time
 import urllib.request
 import webbrowser
 
-from jarvis.security import describe_exposure, unlock_url
+from aegis.security import describe_exposure, unlock_url
 
-DEFAULT_HOST = "127.0.0.1"  # localhost only; see jarvis/security.py
+DEFAULT_HOST = "127.0.0.1"  # localhost only; see aegis/security.py
 
 
 def _open_when_ready(url: str, health_url: str, token: str) -> None:
@@ -33,7 +33,7 @@ def _open_when_ready(url: str, health_url: str, token: str) -> None:
     deadline = time.monotonic() + 30
     while time.monotonic() < deadline:
         try:
-            request = urllib.request.Request(health_url, headers={"X-Jarvis-Token": token})
+            request = urllib.request.Request(health_url, headers={"X-Aegis-Token": token})
             urllib.request.urlopen(request, timeout=2)
             break
         except Exception:
@@ -47,15 +47,15 @@ def _open_when_ready(url: str, health_url: str, token: str) -> None:
 def run_web(host: str, port: int, open_browser: bool) -> int:
     import uvicorn
 
-    from jarvis.security import get_token
-    from jarvis.server import app
+    from aegis.security import get_token
+    from aegis.server import app
 
     print()
-    print("  🦞 Claw — your Jarvis is awake")
+    print("  🛡 Aegis — your Aegis is awake")
     print(f"  →  open {unlock_url(port, host)}")
     print(f"     {describe_exposure(host)}")
     if host not in {"127.0.0.1", "localhost", "::1"}:
-        print("     (set JARVIS_HOST=127.0.0.1 to go back to this machine only)")
+        print("     (set AEGIS_HOST=127.0.0.1 to go back to this machine only)")
     print()
 
     if open_browser:
@@ -71,8 +71,8 @@ def run_web(host: str, port: int, open_browser: bool) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        prog="claw",
-        description="Claw — your own Jarvis for the PC.",
+        prog="aegis",
+        description="Aegis — your own Aegis for the PC.",
     )
     parser.add_argument(
         "--web",
@@ -98,19 +98,19 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    port = args.port if args.port is not None else int(os.environ.get("JARVIS_PORT", "8000"))
+    port = args.port if args.port is not None else int(os.environ.get("AEGIS_PORT", "8000"))
 
     if args.self_check:
-        from jarvis.desktop import self_check
+        from aegis.desktop import self_check
 
         return self_check()
 
     if args.web:
-        host = args.host or os.environ.get("JARVIS_HOST", DEFAULT_HOST)
-        os.environ["JARVIS_HOST"] = host
+        host = args.host or os.environ.get("AEGIS_HOST", DEFAULT_HOST)
+        os.environ["AEGIS_HOST"] = host
         return run_web(host, port, open_browser=not args.no_open)
 
-    from jarvis.desktop import run_desktop
+    from aegis.desktop import run_desktop
 
     return run_desktop(port=port, debug=args.debug)
 

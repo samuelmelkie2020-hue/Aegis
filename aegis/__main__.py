@@ -1,4 +1,4 @@
-"""`python -m jarvis` and the installed `claw` command."""
+"""`python -m aegis` and the installed `aegis` command."""
 
 from __future__ import annotations
 

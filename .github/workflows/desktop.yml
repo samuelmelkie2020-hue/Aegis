@@ -19,14 +19,14 @@ jobs:
       matrix:
         include:
           - os: windows-latest
-            artifact: Claw-windows
-            path: dist/Claw.exe
+            artifact: Aegis-windows
+            path: dist/Aegis.exe
           - os: macos-latest
-            artifact: Claw-macos
-            path: dist/Claw.app
+            artifact: Aegis-macos
+            path: dist/Aegis.app
           - os: ubuntu-latest
-            artifact: Claw-linux
-            path: dist/Claw
+            artifact: Aegis-linux
+            path: dist/Aegis
 
     steps:
       - uses: actions/checkout@v4
@@ -53,27 +53,27 @@ jobs:
       - name: Tests
         env:
           # No display on a runner: a crash dialog would block forever.
-          JARVIS_NO_GUI_ERRORS: "1"
+          AEGIS_NO_GUI_ERRORS: "1"
         run: python -m pytest -q
 
       - name: Build
         shell: bash
-        run: python -m PyInstaller --noconfirm --clean packaging/claw.spec
+        run: python -m PyInstaller --noconfirm --clean packaging/aegis.spec
 
       # Smoke-test the actual binary: a bundle that starts from source but not
       # after freezing is exactly the failure users report.
       - name: Smoke-test the binary (Linux)
         if: runner.os == 'Linux'
         run: |
-          xvfb-run -a ./dist/Claw --self-check
+          xvfb-run -a ./dist/Aegis --self-check
           # The report file is what a windowed build leaves behind; assert on it too.
-          grep -q "All checks passed" "$HOME/.config/Claw/self-check.txt"
+          grep -q "All checks passed" "$HOME/.config/Aegis/self-check.txt"
 
       - name: Smoke-test the binary (macOS)
         if: runner.os == 'macOS'
         run: |
-          ./dist/Claw.app/Contents/MacOS/Claw --self-check
-          grep -q "frozen:      True" "$HOME/Library/Application Support/Claw/self-check.txt"
+          ./dist/Aegis.app/Contents/MacOS/Aegis --self-check
+          grep -q "frozen:      True" "$HOME/Library/Application Support/Aegis/self-check.txt"
 
       # A windowed (no-console) Windows binary detaches from cmd the moment it
       # starts, so `cmd /c` returns before the check runs. Wait on the process
@@ -82,8 +82,8 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          Start-Process -FilePath dist\Claw.exe -ArgumentList '--self-check' -Wait
-          $report = Join-Path $env:APPDATA 'Claw\self-check.txt'
+          Start-Process -FilePath dist\Aegis.exe -ArgumentList '--self-check' -Wait
+          $report = Join-Path $env:APPDATA 'Aegis\self-check.txt'
           Get-Content $report
           if (-not (Select-String -Path $report -Pattern 'All checks passed')) {
             throw 'Frozen binary failed its self-check'
@@ -99,7 +99,7 @@ jobs:
           name: ${{ matrix.artifact }}-self-check
           path: |
             **/self-check.txt
-            **/claw-crash.log
+            **/aegis-crash.log
           if-no-files-found: ignore
 
       - uses: actions/upload-artifact@v4

@@ -1,4 +1,4 @@
-"""The Jarvis agent loop: talks to any OpenAI-compatible LLM with tool calling,
+"""The Aegis agent loop: talks to any OpenAI-compatible LLM with tool calling,
 or falls back to a built-in demo brain when no key is configured."""
 
 from __future__ import annotations
@@ -27,7 +27,7 @@ class TurnCancelled(RuntimeError):
 class Turn:
     """Per-request stop conditions.
 
-    The queue bridge in :mod:`jarvis.server` flips ``stop`` when the browser
+    The queue bridge in :mod:`aegis.server` flips ``stop`` when the browser
     goes away, and the deadline keeps one slow tool from pinning a worker (and
     blocking every other request that needs the same config) forever.
     """
@@ -42,7 +42,7 @@ class Turn:
         if time.monotonic() > self.deadline:
             raise TurnCancelled("this request took too long and was stopped")
 
-SYSTEM_PROMPT = """You are {name}, a personal AI assistant that runs on the user's computer — like Jarvis.
+SYSTEM_PROMPT = """You are {name}, a personal AI assistant that runs on the user's computer — like Aegis.
 You can SEE the screen and CONTROL the computer with tools: run commands, open apps, type, click, manage files, read the clipboard and report system status.
 
 Personality: calm, capable, a little witty — but always concise. Speak like a trusted aide.
@@ -127,7 +127,7 @@ def _image_message(image_b64: str) -> dict:
     return {
         "role": "user",
         "content": [
-            {"type": "text", "text": "[Jarvis captured this screenshot of the user's screen]"},
+            {"type": "text", "text": "[Aegis captured this screenshot of the user's screen]"},
             {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{image_b64}"}},
         ],
     }
@@ -157,7 +157,7 @@ def run_agent_turn(
     if approval is not None:
         return _resume_after_approval(approval, history, cfg, emit, turn)
 
-    name = cfg.get("assistant_name") or "Jarvis"
+    name = cfg.get("assistant_name") or "Aegis"
     safe_mode = bool(cfg.get("safe_mode", True))
 
     if is_demo_mode(cfg):
@@ -337,7 +337,7 @@ def _resume_after_approval(
     llm = cfg.get("llm", {})
     client = ChatClient(llm.get("base_url", ""), llm.get("api_key", ""), llm.get("model", ""))
     messages: list[dict] = [
-        {"role": "system", "content": SYSTEM_PROMPT.format(name=cfg.get("assistant_name") or "Jarvis")},
+        {"role": "system", "content": SYSTEM_PROMPT.format(name=cfg.get("assistant_name") or "Aegis")},
     ]
     for m in _clean_history(history):
         messages.append(m)
@@ -413,7 +413,7 @@ def _friendly_model_error(exc: Exception, llm_cfg: dict) -> str:
             "1. Press **🔌 Test connection** in ⚙️ Settings to confirm.\n"
             "2. Try a different **Provider** in Settings — some networks block only some sites "
             "(if you're using the chat preview inside Arena instead of the app on your own PC, "
-            "that preview is *always* blocked from AI sites — run Jarvis on your PC instead).\n"
+            "that preview is *always* blocked from AI sites — run Aegis on your PC instead).\n"
             "3. Use a VPN if your ISP blocks AI sites.\n"
             "4. Or pick **Ollama (local)** — a free AI that runs offline, no internet needed."
         )
@@ -484,7 +484,7 @@ def _match_folder(text: str) -> str | None:
     return None
 
 def _demo_turn(user_message: str, cfg: dict, emit: EmitFn, session_token: str = "") -> str:
-    name = cfg.get("assistant_name") or "Jarvis"
+    name = cfg.get("assistant_name") or "Aegis"
     text = (user_message or "").strip()
     low = text.lower()
 

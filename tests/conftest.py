@@ -2,7 +2,7 @@
 
 Isolation is set up **at import time**, not inside a fixture, because pytest
 imports test modules during collection — before any fixture runs. A test file's
-``from jarvis import config`` would otherwise capture the real repository path
+``from aegis import config`` would otherwise capture the real repository path
 and quietly write into the checkout.
 
 The environment is therefore redirected once per session to a temp directory;
@@ -20,24 +20,24 @@ import tempfile
 
 import pytest
 
-_SANDBOX = tempfile.mkdtemp(prefix="jarvis-tests-")
+_SANDBOX = tempfile.mkdtemp(prefix="aegis-tests-")
 _HOME = os.path.join(_SANDBOX, "home")
 os.makedirs(_HOME, exist_ok=True)
 
 _ENV_OVERRIDES = {
     "HOME": _HOME,
     "USERPROFILE": _HOME,  # Windows
-    "JARVIS_CONFIG": os.path.join(_SANDBOX, "jarvis_config.json"),
-    "JARVIS_TOKEN_FILE": os.path.join(_SANDBOX, ".jarvis_token"),
-    "JARVIS_HOST": "127.0.0.1",
+    "AEGIS_CONFIG": os.path.join(_SANDBOX, "aegis_config.json"),
+    "AEGIS_TOKEN_FILE": os.path.join(_SANDBOX, ".aegis_token"),
+    "AEGIS_HOST": "127.0.0.1",
 }
 _ENV_CLEARED = (
-    "JARVIS_TOKEN",
-    "JARVIS_ALLOWED_HOSTS",
-    "JARVIS_ALLOW_READ_OUTSIDE_HOME",
-    "JARVIS_ALLOW_WRITE_OUTSIDE_HOME",
-    "JARVIS_EMBED_TOKEN",
-    "JARVIS_PREVIEW_HOST_SUFFIXES",
+    "AEGIS_TOKEN",
+    "AEGIS_ALLOWED_HOSTS",
+    "AEGIS_ALLOW_READ_OUTSIDE_HOME",
+    "AEGIS_ALLOW_WRITE_OUTSIDE_HOME",
+    "AEGIS_EMBED_TOKEN",
+    "AEGIS_PREVIEW_HOST_SUFFIXES",
 )
 
 for _key, _value in _ENV_OVERRIDES.items():
@@ -51,9 +51,9 @@ atexit.register(shutil.rmtree, _SANDBOX, True)
 @pytest.fixture()
 def sandbox():
     """A clean per-test state inside the session sandbox."""
-    from jarvis import approvals, config
+    from aegis import approvals, config
 
-    for name in ("jarvis_config.json", ".jarvis_token"):
+    for name in ("aegis_config.json", ".aegis_token"):
         target = os.path.join(_SANDBOX, name)
         if os.path.exists(target):
             os.unlink(target)
@@ -80,12 +80,12 @@ def client(sandbox):
     """An authenticated TestClient (loopback Host + the generated token)."""
     from fastapi.testclient import TestClient
 
-    from jarvis.security import get_token
-    from jarvis.server import app
+    from aegis.security import get_token
+    from aegis.server import app
 
     return TestClient(app, raise_server_exceptions=False), {
         "Host": "localhost:8000",
-        "X-Jarvis-Token": get_token(),
+        "X-Aegis-Token": get_token(),
     }
 
 
@@ -99,7 +99,7 @@ def anon(sandbox):
     """An unauthenticated client with its own cookie jar."""
     from fastapi.testclient import TestClient
 
-    from jarvis.server import app
+    from aegis.server import app
 
     return TestClient(app, raise_server_exceptions=False)
 
@@ -110,7 +110,7 @@ def paths(sandbox):
 
     class Paths:
         home = Path(_HOME)
-        config = Path(_SANDBOX) / "jarvis_config.json"
-        token = Path(_SANDBOX) / ".jarvis_token"
+        config = Path(_SANDBOX) / "aegis_config.json"
+        token = Path(_SANDBOX) / ".aegis_token"
 
     return Paths

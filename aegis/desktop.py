@@ -1,6 +1,6 @@
 """The desktop shell.
 
-Claw started life as a web page. This module gives it a native window without
+Aegis started life as a web page. This module gives it a native window without
 duplicating the app: uvicorn runs in a background thread on loopback, and
 pywebview shows the same UI in the OS webview (WebView2 on Windows, WKWebView on
 macOS, WebKitGTK on Linux).
@@ -31,9 +31,9 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass
 
-log = logging.getLogger("jarvis.desktop")
+log = logging.getLogger("aegis.desktop")
 
-APP_NAME = "Claw"
+APP_NAME = "Aegis"
 WINDOW_WIDTH = 1240
 WINDOW_HEIGHT = 840
 MIN_SIZE = (900, 620)
@@ -101,7 +101,7 @@ def start_server(port: int, *, log_level: str = "warning") -> ServerHandle:
     # In a thread these would try to own SIGINT/SIGTERM from the webview loop.
     server.install_signal_handlers = lambda: None  # type: ignore[method-assign]
 
-    thread = threading.Thread(target=server.run, name="jarvis-uvicorn", daemon=True)
+    thread = threading.Thread(target=server.run, name="aegis-uvicorn", daemon=True)
     thread.start()
 
     handle = ServerHandle(port=port, thread=thread, server=server)
@@ -116,9 +116,9 @@ def _await_ready(handle: ServerHandle, token: str) -> None:
     last_error: Exception | None = None
     while time.monotonic() < deadline:
         if not handle.thread.is_alive():
-            raise RuntimeError("The Jarvis server exited during startup.")
+            raise RuntimeError("The Aegis server exited during startup.")
         try:
-            request = urllib.request.Request(url, headers={"X-Jarvis-Token": token})
+            request = urllib.request.Request(url, headers={"X-Aegis-Token": token})
             with urllib.request.urlopen(request, timeout=2):
                 return
         except urllib.error.HTTPError as exc:
@@ -138,7 +138,7 @@ def _await_ready(handle: ServerHandle, token: str) -> None:
     except Exception:  # pragma: no cover - diagnostics must never raise
         pass
     raise RuntimeError(
-        f"Jarvis did not start within {STARTUP_TIMEOUT:.0f}s ({last_error}).{hint}"
+        f"Aegis did not start within {STARTUP_TIMEOUT:.0f}s ({last_error}).{hint}"
     )
 
 
@@ -187,7 +187,7 @@ class DesktopAPI:
             return
         self._window.restore() if self._window.minimized else self._window.show()
         try:
-            self._window.evaluate_js("window.__jarvisOpenSettings && window.__jarvisOpenSettings()")
+            self._window.evaluate_js("window.__aegisOpenSettings && window.__aegisOpenSettings()")
         except Exception:  # pragma: no cover - best effort
             log.debug("Could not open settings from the menu", exc_info=True)
 
@@ -195,7 +195,7 @@ class DesktopAPI:
         if self._window is None:
             return
         try:
-            self._window.evaluate_js("window.__jarvisNewChat && window.__jarvisNewChat()")
+            self._window.evaluate_js("window.__aegisNewChat && window.__aegisNewChat()")
         except Exception:  # pragma: no cover
             log.debug("Could not start a new conversation", exc_info=True)
 
@@ -215,7 +215,7 @@ def _menu(api: DesktopAPI):
         MenuAction("New conversation", api.new_conversation),
         MenuSeparator(),
     ]
-    return [Menu("Claw", items)]
+    return [Menu("Aegis", items)]
 
 
 def _ensure_streams() -> None:
@@ -252,7 +252,7 @@ def self_check() -> int:
     try:
         from . import __version__
 
-        say(f"Claw {__version__} self-check")
+        say(f"Aegis {__version__} self-check")
     except Exception as exc:  # pragma: no cover - only if the bundle is broken
         problems.append(f"version import failed: {exc}")
 
@@ -277,7 +277,7 @@ def self_check() -> int:
 
         for asset in ("index.html", "app.js", "style.css"):
             if not (Path(STATIC_DIR) / asset).exists():
-                problems.append(f"missing bundled asset: jarvis/static/{asset}")
+                problems.append(f"missing bundled asset: aegis/static/{asset}")
         say(f"  web UI:      {STATIC_DIR}")
     except Exception as exc:
         problems.append(f"web UI missing: {exc}")
@@ -340,26 +340,26 @@ def _report_fatal(exc: Exception, *, page: str | None = None) -> None:
         from .config import DATA_DIR
 
         DATA_DIR.mkdir(parents=True, exist_ok=True)
-        path = DATA_DIR / "claw-crash.log"
+        path = DATA_DIR / "aegis-crash.log"
         path.write_text(detail, encoding="utf-8")
         location = str(path)
     except Exception:  # pragma: no cover
         pass
 
-    print(f"\n  Could not start Claw: {exc}\n")
+    print(f"\n  Could not start Aegis: {exc}\n")
     if location:
         print(f"  Details written to {location}\n")
 
     if not page:
         return
-    if os.environ.get("JARVIS_NO_GUI_ERRORS"):
+    if os.environ.get("AEGIS_NO_GUI_ERRORS"):
         # Headless (CI, a service): a window here would block with nobody to
         # close it. The log above is the record.
         return
     try:  # the webview is already imported: we only get here after it was
         import webview
 
-        webview.create_window("Claw could not start", html=page(error=exc, log=location))
+        webview.create_window("Aegis could not start", html=page(error=exc, log=location))
         _show_without_blocking(webview)
     except Exception:  # pragma: no cover - no display, no backend, or headless
         log.warning("Could not show the error window", exc_info=True)
@@ -373,7 +373,7 @@ def _show_without_blocking(webview, timeout: float | None = None) -> None:
     hides the failure. Runs it on a daemon thread and gives up quietly.
     """
     thread = threading.Thread(
-        target=_swallow, args=(webview.start,), name="jarvis-error-window", daemon=True
+        target=_swallow, args=(webview.start,), name="aegis-error-window", daemon=True
     )
     thread.start()
     thread.join(ERROR_WINDOW_TIMEOUT if timeout is None else timeout)
@@ -401,7 +401,7 @@ def run_desktop(*, port: int | None = None, debug: bool = False) -> int:
 
     from .security import get_token
 
-    preferred = port or int(os.environ.get("JARVIS_PORT", "8000"))
+    preferred = port or int(os.environ.get("AEGIS_PORT", "8000"))
     chosen = find_free_port(preferred)
     if chosen != preferred:
         log.warning("Port %s was busy; using %s instead", preferred, chosen)
@@ -415,7 +415,7 @@ def run_desktop(*, port: int | None = None, debug: bool = False) -> int:
     api = DesktopAPI()
     try:
         window = webview.create_window(
-            title=f"{APP_NAME} — your Jarvis",
+            title=f"{APP_NAME} — your Aegis",
             url=f"{handle.base_url}/?token={get_token()}",
             js_api=api,
             width=WINDOW_WIDTH,
@@ -434,7 +434,7 @@ def run_desktop(*, port: int | None = None, debug: bool = False) -> int:
         except Exception:  # pragma: no cover - optional in older versions
             pass
 
-        print(f"\n  🦞 Claw is running as a desktop app (port {chosen}).")
+        print(f"\n  🛡 Aegis is running as a desktop app (port {chosen}).")
         print("     Close the window to quit.\n")
 
         webview.start(
@@ -452,7 +452,7 @@ def run_desktop(*, port: int | None = None, debug: bool = False) -> int:
 
 
 _ERROR_PAGE = """<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><title>Claw could not start</title>
+<html lang="en"><head><meta charset="utf-8"><title>Aegis could not start</title>
 <style>
   body {{ margin:0; min-height:100vh; display:grid; place-items:center;
          background:#060b16; color:#e6edf7;
@@ -465,7 +465,7 @@ _ERROR_PAGE = """<!doctype html>
   p {{ margin:.5rem 0; color:#9fb0c9; }}
 </style></head>
 <body><main>
-  <h1>Claw could not start</h1>
+  <h1>Aegis could not start</h1>
   <code>{error}</code>
   <p>Full details: {log}</p>
   <p>On Linux the window needs WebKitGTK

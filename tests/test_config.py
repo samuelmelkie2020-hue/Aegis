@@ -9,13 +9,13 @@ from pathlib import Path
 
 import pytest
 
-from jarvis import config
+from aegis import config
 
 
 def test_defaults_when_no_file(paths):
     paths.config.unlink(missing_ok=True)
     cfg = config.load_config()
-    assert cfg["assistant_name"] == "Jarvis"
+    assert cfg["assistant_name"] == "Aegis"
     assert cfg["safe_mode"] is True
     assert cfg["llm"]["api_key"] == ""
 
@@ -108,7 +108,7 @@ def test_save_is_atomic_under_concurrency(paths):
 
 def test_no_temp_files_left_behind(paths):
     config.save_config({"assistant_name": "Friday"})
-    leftovers = [p.name for p in paths.config.parent.iterdir() if p.name.startswith(".jarvis_config")]
+    leftovers = [p.name for p in paths.config.parent.iterdir() if p.name.startswith(".aegis_config")]
     assert leftovers == []
 
 

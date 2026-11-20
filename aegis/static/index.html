@@ -3,9 +3,9 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Claw — Your Jarvis</title>
+  <title>Aegis — your PC assistant</title>
   <link rel="stylesheet" href="/static/style.css" />
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🦞</text></svg>" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🛡</text></svg>" />
 </head>
 <body>
   <!-- animated background -->
@@ -21,16 +21,16 @@
 
   <!-- Session bootstrap. The server fills in the token only for a local or
        preview request; elsewhere this is empty and "config.js" says so. -->
-  <script>window.JARVIS_TOKEN = "%%JARVIS_TOKEN%%";</script>
+  <script>window.AEGIS_TOKEN = "%%AEGIS_TOKEN%%";</script>
   <script src="/config.js"></script>
 
   <div class="app">
     <!-- ================= LEFT: diagnostics, orb, screen ================= -->
     <aside class="sidebar">
       <header class="brand">
-        <div class="brand-logo" aria-hidden="true">🦞</div>
+        <div class="brand-logo" aria-hidden="true">🛡</div>
         <div class="brand-text">
-          <h1 id="assistantName">Jarvis</h1>
+          <h1 id="assistantName">Aegis</h1>
           <p class="brand-sub">Just a rather very intelligent system</p>
         </div>
         <button id="settingsBtn" class="icon-btn" title="Settings" aria-label="Settings">⚙️</button>
@@ -142,9 +142,9 @@
 
       <div class="chat-log" id="chatLog" role="log" aria-live="polite" aria-relevant="additions" aria-label="Conversation">
         <div class="hero" id="welcomeHero">
-          <div class="hero-orb">🦞</div>
+          <div class="hero-orb">🛡</div>
           <h3>At your service.</h3>
-          <p>I'm <b>Jarvis</b> — I can <b>see your screen</b> and <b>control this PC</b>.</p>
+          <p>I'm <b>Aegis</b> — I can <b>see your screen</b> and <b>control this PC</b>.</p>
           <div class="hero-tips">
             <button class="chip" data-say="What's on my screen?">What's on my screen?</button>
             <button class="chip" data-say="How is my PC doing?">System status</button>
@@ -156,9 +156,9 @@
 
       <footer class="composer">
         <div class="input-row">
-          <button id="micBtn" class="mic-btn" title="Talk to Jarvis (voice input)"
+          <button id="micBtn" class="mic-btn" title="Talk to Aegis (voice input)"
                   aria-label="Voice input" aria-pressed="false">🎙</button>
-          <label class="sr-only" for="userInput">Message Jarvis</label>
+          <label class="sr-only" for="userInput">Message Aegis</label>
           <div class="input-wrap">
             <span aria-hidden="true">&gt;_</span>
             <textarea id="userInput" rows="1" placeholder="Speak or type a command…"
@@ -184,7 +184,7 @@
 
       <label class="field" for="setName">
         <span>Assistant name</span>
-        <input id="setName" type="text" placeholder="Jarvis" autocomplete="off" />
+        <input id="setName" type="text" placeholder="Aegis" autocomplete="off" />
       </label>
 
       <div class="modal-section">🧠 AI brain — any OpenAI-compatible provider</div>
@@ -232,7 +232,7 @@
       <label class="field" for="setModel">
         <span>Model</span>
         <input id="setModel" type="text" placeholder="gpt-4o-mini" autocomplete="off" />
-        <small>Use a vision model (gpt-4o, gemini-2.0-flash, llama3.2-vision…) so Jarvis can see your screen.</small>
+        <small>Use a vision model (gpt-4o, gemini-2.0-flash, llama3.2-vision…) so Aegis can see your screen.</small>
       </label>
 
       <div class="modal-actions">
@@ -241,7 +241,7 @@
         <button class="btn primary" id="saveSettings">Save settings</button>
       </div>
       <p class="test-result" id="testResult"></p>
-      <p class="modal-note">Keys are stored only on this machine, in <code>jarvis_config.json</code>.</p>
+      <p class="modal-note">Keys are stored only on this machine, in <code>aegis_config.json</code>.</p>
     </div>
   </div>
 
