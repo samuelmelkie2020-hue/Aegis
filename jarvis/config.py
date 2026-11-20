@@ -19,6 +19,7 @@ import os
 import platform
 import sys
 import tempfile
+import time
 from pathlib import Path
 from typing import Any
 
@@ -219,25 +220,86 @@ def load_config() -> dict[str, Any]:
     return cfg
 
 
+# A reader on Windows can hold the config open for a few milliseconds, which
+# makes os.replace fail with a sharing violation. Saving is retried briefly
+# rather than surfacing a spurious "Access is denied" to the user.
+REPLACE_ATTEMPTS = 6
+REPLACE_BACKOFF = 0.05
+
+
 def _atomic_write(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=".jarvis_config.", suffix=".tmp")
     try:
+        _restrict(tmp)  # before the key is written, not after
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             handle.write(text)
             handle.flush()
             os.fsync(handle.fileno())
-        try:
-            os.chmod(tmp, 0o600)  # only the owner can read the API key
-        except OSError:
-            pass  # e.g. Windows, where chmod is a no-op
-        os.replace(tmp, path)
+        _replace_with_retry(tmp, path)
     except BaseException:
         try:
             os.unlink(tmp)
         except OSError:
             pass
         raise
+
+
+def _restrict(path: str | Path) -> None:
+    """Make a file owner-only.
+
+    POSIX mode bits are not access control on Windows, where ``chmod`` only
+    toggles the read-only flag — so an API key written there would be readable
+    by every account on the machine. NTFS needs an ACL for the same promise.
+    """
+    if sys.platform.startswith("win"):
+        _restrict_windows(path)
+        return
+    try:
+        os.chmod(path, 0o600)
+    except OSError as exc:  # pragma: no cover - exotic filesystems
+        log.warning("Could not restrict permissions on %s: %s", path, exc)
+
+
+def _restrict_windows(path: str | Path) -> None:
+    """Apply a "full control for this user only" ACL to ``path``."""
+    try:
+        import ntsecuritycon
+        import win32security
+    except ImportError:  # pragma: no cover - pywin32 absent (optional dependency)
+        log.warning("pywin32 is not installed; %s keeps inherited permissions", path)
+        return
+    try:
+        user, _domain, _kind = win32security.LookupAccountName(
+            None, os.environ.get("USERNAME", "")
+        )
+        acl = win32security.ACL()
+        acl.AddAccessAllowedAce(
+            win32security.ACL_REVISION, ntsecuritycon.FILE_ALL_ACCESS, user
+        )
+        win32security.SetNamedSecurityInfo(
+            str(path),
+            win32security.SE_FILE_OBJECT,
+            win32security.DACL_SECURITY_INFORMATION
+            | win32security.PROTECTED_DACL_SECURITY_INFORMATION,
+            None,
+            None,
+            acl,
+            None,
+        )
+    except Exception as exc:  # pragma: no cover - saving must never fail for this
+        log.warning("Could not restrict permissions on %s: %s", path, exc)
+
+
+def _replace_with_retry(tmp: str, path: Path) -> None:
+    for attempt in range(REPLACE_ATTEMPTS):
+        try:
+            os.replace(tmp, path)
+            return
+        except PermissionError:
+            if attempt == REPLACE_ATTEMPTS - 1:
+                raise
+            time.sleep(REPLACE_BACKOFF * (attempt + 1))
 
 
 def save_config(patch: dict[str, Any] | None) -> dict[str, Any]:

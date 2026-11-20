@@ -71,6 +71,10 @@ def get_token() -> str:
     try:
         TOKEN_FILE.parent.mkdir(parents=True, exist_ok=True)
         fd = os.open(str(TOKEN_FILE), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        # Mode bits are not access control on Windows; an ACL is.
+        from .config import _restrict
+
+        _restrict(TOKEN_FILE)
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             handle.write(token + "\n")
     except OSError as exc:  # read-only checkout, etc. — keep running, memory only

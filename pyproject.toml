@@ -21,6 +21,7 @@ dependencies = [
     # Desktop shell: uses the OS webview, no bundled browser engine.
     # Linux also needs the system WebKitGTK + PyGObject packages (see README).
     "pywebview>=5.0,<7.0",
+    "pywin32>=306; sys_platform == 'win32'",
 ]
 
 [project.optional-dependencies]

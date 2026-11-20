@@ -190,7 +190,7 @@ Environment variables:
 
 ```bash
 pip install -r requirements-dev.txt   # runtime deps + pytest + ruff
-python -m pytest -q                   # 206 tests, ~3s, no display or API key needed
+python -m pytest -q                   # 207 tests, ~3s, no display or API key needed
 ruff check .                          # lint (config lives in pyproject.toml)
 python run.py --self-check            # diagnose a machine: data dir, server, webview
 node --check jarvis/static/app.js     # front-end syntax

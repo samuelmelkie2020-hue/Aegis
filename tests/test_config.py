@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sys
 import threading
 from pathlib import Path
 
@@ -65,12 +66,24 @@ def test_poisoned_file_does_not_500_the_app(paths, client):
     assert cfg["safe_mode"] is True
 
 
+@pytest.mark.skipif(sys.platform.startswith("win"), reason="windows uses an ACL, not mode bits")
 def test_settings_file_is_owner_only(paths):
     import os
     import stat
 
     config.save_config({"assistant_name": "Friday"})
     assert stat.S_IMODE(os.stat(paths.config).st_mode) == 0o600
+
+
+def test_saving_restricts_the_file_on_every_platform(paths, monkeypatch):
+    """The API key must be owner-only: mode bits on POSIX, an ACL on Windows."""
+    calls = []
+    monkeypatch.setattr(config, "_restrict", lambda path: calls.append(str(path)))
+
+    config.save_config({"assistant_name": "Friday"})
+
+    assert calls, "the config was written without restricting permissions"
+    assert calls[0].endswith(".tmp"), "restrict before the key lands in the file"
 
 
 def test_save_is_atomic_under_concurrency(paths):
