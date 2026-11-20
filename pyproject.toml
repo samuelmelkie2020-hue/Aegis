@@ -4,11 +4,11 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "aegis-pc"
-version = "1.0.0"
+dynamic = ["version"]
 description = "A local AI assistant that can see your screen and control your PC"
 readme = "README.md"
 requires-python = ">=3.10"
-license = { text = "MIT" }
+license = { file = "LICENSE" }
 dependencies = [
     "fastapi>=0.110,<1.0",
     "uvicorn>=0.29,<1.0",
@@ -34,6 +34,11 @@ dev = [
 [project.scripts]
 aegis = "aegis.__main__:main"
 aegis-web = "run:main"
+
+[tool.setuptools.dynamic]
+# One source of truth: aegis/__init__.py. The release workflow also checks that
+# a pushed tag matches this, so a release cannot be cut with a stale number.
+version = { attr = "aegis.__version__" }
 
 [project.urls]
 Homepage = "https://github.com/samuelmelkie2020-hue/Aegis"
