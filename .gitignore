@@ -2,6 +2,13 @@
 jarvis_config.json
 config.json
 
+# Access token for the local API (never commit)
+.jarvis_token
+
+# Diagnostics written by the desktop shell
+self-check.txt
+claw-crash.log
+
 # Python
 __pycache__/
 *.py[cod]
@@ -19,3 +26,13 @@ Thumbs.db
 # Logs and captures
 *.log
 screenshots/
+
+# Test / tooling caches
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# PyInstaller output
+build/
+dist/
