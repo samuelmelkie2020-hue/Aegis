@@ -36,7 +36,7 @@ aegis = "aegis.__main__:main"
 aegis-web = "run:main"
 
 [project.urls]
-Homepage = "https://github.com/samuelmelkie2020-hue/claw"
+Homepage = "https://github.com/samuelmelkie2020-hue/Aegis"
 
 [tool.setuptools]
 packages = ["aegis"]

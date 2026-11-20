@@ -27,7 +27,7 @@ Ask it in plain English (or by voice) and it will look at your screen, run comma
 
 ### 💻 The easy way — download the app
 
-Grab the build for your OS from **[Releases](https://github.com/samuelmelkie2020-hue/claw/releases)** and run it:
+Grab the build for your OS from **[Releases](https://github.com/samuelmelkie2020-hue/Aegis/releases)** and run it:
 
 | OS | File | Then |
 |---|---|---|
@@ -46,7 +46,7 @@ No Python, no terminal, no browser tab. Aegis opens in **its own window**, and t
 Requires **Python 3.10+** (3.11 or newer recommended).
 
 ```bash
-git clone https://github.com/samuelmelkie2020-hue/claw.git
+git clone https://github.com/samuelmelkie2020-hue/Aegis.git
 cd aegis
 
 python -m venv .venv

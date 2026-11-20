@@ -13,6 +13,7 @@ from __future__ import annotations
 import sys
 import threading
 import types
+from pathlib import Path
 
 import pytest
 
@@ -21,12 +22,21 @@ import pytest
 # ---------------------------------------------------------------------------
 
 def test_source_mode_keeps_config_beside_the_repo(monkeypatch):
+    """From source, settings stay in the checkout — not in a per-user folder.
+
+    Asserted by comparing against the package root, not by rejecting the name
+    "Aegis": the repository is called Aegis now, so a CI checkout legitimately
+    ends in a directory of that name and a name-based assertion was asserting
+    the old repo's name.
+    """
     from aegis import config
 
     monkeypatch.delenv("AEGIS_DATA_DIR", raising=False)
     monkeypatch.setattr(config, "is_frozen", lambda: False)
-    assert config.user_data_dir().name != "Aegis"
-    assert (config.user_data_dir() / "aegis_config.json").exists() or True
+
+    source_root = Path(config.__file__).resolve().parent.parent
+    assert config.user_data_dir() == source_root
+    assert "Claw" not in config.user_data_dir().parts
 
 
 @pytest.mark.parametrize(
