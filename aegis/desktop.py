@@ -30,6 +30,7 @@ import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
+from pathlib import Path
 
 log = logging.getLogger("aegis.desktop")
 
@@ -218,6 +219,19 @@ def _menu(api: DesktopAPI):
     return [Menu("Aegis", items)]
 
 
+def window_icon_path() -> Path | None:
+    """The window icon, wherever it lives in this layout (source or bundle).
+
+    Windows and macOS take the icon from the executable itself, so this only
+    matters on Linux — but returning ``None`` cleanly is what keeps a missing
+    asset from breaking startup anywhere.
+    """
+    from .server import STATIC_DIR
+
+    candidate = Path(STATIC_DIR) / "aegis.png"
+    return candidate if candidate.exists() else None
+
+
 def _ensure_streams() -> None:
     """Give a windowed bundle somewhere to print.
 
@@ -278,6 +292,11 @@ def self_check() -> int:
         for asset in ("index.html", "app.js", "style.css"):
             if not (Path(STATIC_DIR) / asset).exists():
                 problems.append(f"missing bundled asset: aegis/static/{asset}")
+        if window_icon_path() is None:
+            # Cosmetic, so it is reported but does not fail the check.
+            print("  window icon: missing (aegis.png not bundled)")
+        else:
+            print("  window icon: ok")
         say(f"  web UI:      {STATIC_DIR}")
     except Exception as exc:
         problems.append(f"web UI missing: {exc}")
@@ -415,7 +434,7 @@ def run_desktop(*, port: int | None = None, debug: bool = False) -> int:
     api = DesktopAPI()
     try:
         window = webview.create_window(
-            title=f"{APP_NAME} — your Aegis",
+            title=APP_NAME,
             url=f"{handle.base_url}/?token={get_token()}",
             js_api=api,
             width=WINDOW_WIDTH,
@@ -425,6 +444,7 @@ def run_desktop(*, port: int | None = None, debug: bool = False) -> int:
             text_select=True,
             zoomable=True,
             confirm_close=True,
+            **({"icon": str(icon)} if (icon := window_icon_path()) else {}),
         )
         api.attach(window, handle)
 
