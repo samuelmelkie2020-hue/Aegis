@@ -9,7 +9,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import tomllib
+try:  # tomllib is stdlib from 3.11; the CI matrix still runs 3.10.
+    import tomllib
+except ImportError:  # pragma: no cover
+    import tomli as tomllib
 
 ROOT = Path(__file__).resolve().parent.parent
 

@@ -1,5 +1,8 @@
 # Development / CI only. Runtime deps live in requirements.txt.
 -r requirements.txt
 
+# py3.10 has no tomllib; the version/licence tests parse pyproject.toml.
+tomli>=2.0; python_version < "3.11"
+
 pytest>=8.0
 ruff>=0.6
