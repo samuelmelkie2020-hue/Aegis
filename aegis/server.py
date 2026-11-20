@@ -59,7 +59,17 @@ QUEUE_PUT_TIMEOUT = 5       # how long a tool may block on a stalled client
 MAX_QUEUE_ITEMS = 64        # bound the memory one abandoned turn can hold
 log = logging.getLogger("aegis.server")
 
-app = FastAPI(title="Aegis — Aegis", version=__version__)
+# `docs_url` and friends are disabled deliberately. They need no token, so
+# leaving them on publishes a map of every endpoint — request bodies and all —
+# to anything that can reach the port. The API is documented in the README
+# instead, and the UI is the client.
+app = FastAPI(
+    title="Aegis",
+    version=__version__,
+    docs_url=None,
+    redoc_url=None,
+    openapi_url=None,
+)
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 # Only the /api surface is protected; "/" and "/static" stay public so the page

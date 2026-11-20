@@ -58,6 +58,22 @@ jobs:
 
       # The icon is generated, not hand-drawn, so a missing asset shows up here
       # rather than as a mystery blank icon in a released installer.
+      # A tag says what version this is; make sure the code agrees before
+      # anything is published. v1.3.0 shipped while the package still said
+      # 1.0.0, which makes bug reports point at the wrong build.
+      - name: Tag matches the package version
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          python - <<'PY'
+          import os, sys
+          from aegis import __version__
+          tag = os.environ["GITHUB_REF_NAME"].lstrip("v")
+          if tag != __version__:
+              sys.exit(f"tag {tag} != package version {__version__}")
+          print(f"tag matches package version {__version__}")
+          PY
+
       - name: Verify the application icon
         shell: bash
         run: |
