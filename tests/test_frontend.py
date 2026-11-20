@@ -111,6 +111,33 @@ def test_screen_image_has_meaningful_alt_text(html):
     assert alt and alt.lower() not in {"image", "img", "screenshot"}
 
 
+
+def test_every_class_the_ui_needs_is_styled():
+    """A restyle must not quietly drop a class the UI depends on.
+
+    When the visual theme was replaced wholesale, three classes the script and
+    server use survived in the markup but lost their rules — invisible in a
+    browser, and the kind of thing that only shows up as an unstyled panel.
+    """
+    css = (STATIC / "style.css").read_text(encoding="utf-8")
+    js = (STATIC / "app.js").read_text(encoding="utf-8")
+    markup = (STATIC / "index.html").read_text(encoding="utf-8")
+    server = (STATIC.parent / "server.py").read_text(encoding="utf-8")
+
+    defined = set(re.findall(r"\.([a-zA-Z][\w-]*)", css))
+    used: set[str] = set()
+    for source in (markup, server):
+        for attr in re.findall(r'class="([^"]+)"', source):
+            used.update(attr.split())
+    for attr in re.findall(r'class="([^"]+)"', js):
+        used.update(attr.split())
+    used.update(re.findall(r'classList\.(?:add|remove|toggle)\("([\w-]+)"', js))
+
+    # Toggled-only hooks that carry no appearance of their own.
+    allowed_unstyled = {"hidden", "desktop"}
+    missing = sorted(used - defined - allowed_unstyled)
+    assert not missing, f"classes used but not styled: {missing}"
+
 def test_focus_is_never_suppressed_without_a_replacement():
     """`outline: none` with nothing in its place hides keyboard focus."""
     css = (STATIC / "style.css").read_text(encoding="utf-8")
