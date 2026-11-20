@@ -17,6 +17,7 @@ API_ROUTES = [
     ("get", "/api/settings", None),
     ("get", "/api/bootstrap", None),
     ("get", "/api/screenshot", None),
+    ("get", "/api/stats", None),
     ("post", "/api/settings", {"settings": {}}),
     ("post", "/api/chat", {"message": "hi"}),
     ("post", "/api/approve", {"approval_id": "ap-1-x"}),
