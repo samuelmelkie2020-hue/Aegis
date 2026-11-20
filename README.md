@@ -190,10 +190,10 @@ Environment variables:
 
 ```bash
 pip install -r requirements-dev.txt   # runtime deps + pytest + ruff
-python -m pytest -q                   # 209 tests, ~3s, no display or API key needed
+python -m pytest -q                   # 223 tests, ~3s, no display or API key needed
 ruff check .                          # lint (config lives in pyproject.toml)
 python run.py --self-check            # diagnose a machine: data dir, server, webview
-node --check aegis/static/app.js     # front-end syntax
+node --check aegis/static/app.js      # front-end syntax
 ```
 
 The suite runs headless: it redirects `HOME`, the config file and the token file
@@ -227,6 +227,11 @@ bash packaging/build.sh          # Windows: packaging\build.ps1
 
 The result lands in `dist/` — `Aegis.exe`, `Aegis.app`, or a `Aegis` binary. The spec is
 `packaging/aegis.spec`: one-file, windowed (no console), with `aegis/static` bundled.
+The application icon is code, not a binary blob: `python packaging/make_icon.py`
+regenerates `packaging/assets/aegis.ico|icns|png` and the runtime copy in
+`aegis/static/`. Small sizes are drawn separately rather than downscaled, so the
+16 px taskbar icon stays legible. CI fails the build if an icon asset is missing.
+
 Always run `dist/Aegis --self-check` after freezing — a build that works from source but
 not frozen is the most common packaging failure.
 

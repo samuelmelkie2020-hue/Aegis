@@ -281,6 +281,14 @@ def test_desktop_opens_a_window_on_a_loopback_token_url(fake_webview):
     assert kwargs["private_mode"] is False
 
 
+def test_window_title_is_just_the_app_name(fake_webview):
+    """Taskbars and the Dock already show the icon; a suffix just truncates."""
+    from aegis.desktop import run_desktop
+
+    run_desktop(port=0)
+    assert fake_webview["window_kwargs"]["title"] == "Aegis"
+
+
 def test_desktop_window_is_configured_as_an_app(fake_webview):
     from aegis.desktop import MIN_SIZE, run_desktop
 
@@ -407,7 +415,7 @@ def test_webview_failure_is_reported_without_blocking(monkeypatch, tmp_path):
 
     assert desktop.run_desktop(port=0) == 1
 
-    assert fake.windows[0]["title"].startswith("Aegis —")
+    assert fake.windows[0]["title"] == "Aegis"
     assert "no display" in (tmp_path / "aegis-crash.log").read_text(encoding="utf-8")
     # The crash window is best-effort (it needs a display); the log is not.
     assert [w["args"][0] for w in fake.windows[1:]] in ([], ["Aegis could not start"])

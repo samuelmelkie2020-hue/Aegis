@@ -56,6 +56,23 @@ jobs:
           AEGIS_NO_GUI_ERRORS: "1"
         run: python -m pytest -q
 
+      # The icon is generated, not hand-drawn, so a missing asset shows up here
+      # rather than as a mystery blank icon in a released installer.
+      - name: Verify the application icon
+        shell: bash
+        run: |
+          python - <<'PY'
+          import sys
+          from pathlib import Path
+          want = [Path("packaging/assets/aegis.png"),
+                  Path("packaging/assets/aegis.ico"),
+                  Path("packaging/assets/aegis.icns")]
+          missing = [str(p) for p in want if not p.is_file()]
+          if missing:
+              sys.exit(f"missing icon assets (run packaging/make_icon.py): {missing}")
+          print("icon assets present:", [p.name for p in want])
+          PY
+
       - name: Build
         shell: bash
         run: python -m PyInstaller --noconfirm --clean packaging/aegis.spec
