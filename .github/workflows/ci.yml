@@ -34,9 +34,12 @@ jobs:
           pip install -r requirements-dev.txt
 
       # pyautogui imports Xlib and needs a DISPLAY; keep the suite headless.
+      # JARVIS_NO_GUI_ERRORS: with no display, a crash dialog would block forever
+      # (a tkinter message box hung the Windows build for 40 minutes).
       - name: Tests
         env:
           PYTHONUNBUFFERED: "1"
+          JARVIS_NO_GUI_ERRORS: "1"
         run: python -m pytest -q
 
   lint:

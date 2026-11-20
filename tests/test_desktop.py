@@ -377,12 +377,19 @@ def test_fatal_server_error_opens_an_error_window(monkeypatch, tmp_path):
     assert "RuntimeError: boom" in (tmp_path / "claw-crash.log").read_text(encoding="utf-8")
 
 
-def test_fatal_webview_error_is_reported_not_raised(monkeypatch, tmp_path):
-    """Missing WebKitGTK or a display must produce a message, not a bare traceback."""
+def test_webview_failure_is_reported_without_blocking(monkeypatch, tmp_path):
+    """The error window may itself fail; and no *modal* dialog is ever used.
+
+    A tkinter message box here would block a CI runner forever waiting for a
+    click, and can sit behind the project window on a desktop. Regression test:
+    this is exactly what hung the Windows build.
+    """
     import jarvis.desktop as desktop
 
     fake = _RecordingWebview(start_error=RuntimeError("no display"))
     monkeypatch.setitem(sys.modules, "webview", fake)
+    monkeypatch.setitem(sys.modules, "tkinter", None)
+    monkeypatch.setitem(sys.modules, "tkinter.messagebox", None)
     monkeypatch.setattr("jarvis.config.DATA_DIR", tmp_path)
 
     assert desktop.run_desktop(port=0) == 1
@@ -392,33 +399,57 @@ def test_fatal_webview_error_is_reported_not_raised(monkeypatch, tmp_path):
     assert "no display" in (tmp_path / "claw-crash.log").read_text(encoding="utf-8")
 
 
-def test_fatal_report_falls_back_to_tkinter_without_a_webview(monkeypatch, tmp_path):
-    """A broken pywebview import still has to say something."""
+def test_a_failing_error_window_still_leaves_a_log(monkeypatch, tmp_path):
+    """If even the error window cannot open (headless), the log is the record."""
     import jarvis.desktop as desktop
 
-    shown = []
-    tkinter = types.ModuleType("tkinter")
-    messagebox = types.ModuleType("tkinter.messagebox")
+    class _BrokenWebview(types.ModuleType):
+        def __init__(self):
+            super().__init__("webview")
 
-    class _Root:
-        def withdraw(self):
-            pass
+        def create_window(self, *args, **kwargs):
+            raise RuntimeError("no backend")
 
-        def destroy(self):
-            pass
+        def start(self, **kwargs):  # pragma: no cover - never reached
+            raise AssertionError("should not start")
 
-    tkinter.Tk = _Root
-    tkinter.messagebox = messagebox
-    messagebox.showerror = lambda title, message: shown.append((title, message))
-    monkeypatch.setitem(sys.modules, "webview", None)  # import webview -> ImportError
-    monkeypatch.setitem(sys.modules, "tkinter", tkinter)
-    monkeypatch.setitem(sys.modules, "tkinter.messagebox", messagebox)
+    monkeypatch.setitem(sys.modules, "webview", _BrokenWebview())
     monkeypatch.setattr("jarvis.config.DATA_DIR", tmp_path)
 
-    desktop._report_fatal(RuntimeError("kaboom"), page=None)
+    assert desktop.run_desktop(port=0) == 1
+    assert "no backend" in (tmp_path / "claw-crash.log").read_text(encoding="utf-8")
 
-    assert shown and "kaboom" in shown[0][1]
-    assert "kaboom" in (tmp_path / "claw-crash.log").read_text(encoding="utf-8")
+
+def test_error_window_cannot_block_forever(monkeypatch):
+    """`webview.start()` may hang instead of raising; the crash path must not."""
+    import time
+
+    import jarvis.desktop as desktop
+
+    class _HangingWebview(types.ModuleType):
+        def start(self, **kwargs):
+            time.sleep(30)
+
+    monkeypatch.setattr(desktop, "ERROR_WINDOW_TIMEOUT", 0.2)
+    started = time.monotonic()
+    desktop._show_without_blocking(_HangingWebview("webview"))
+    assert time.monotonic() - started < 5
+
+
+def test_headless_env_skips_the_error_window(monkeypatch, tmp_path):
+    """CI has nobody to close a window, so the log is the only useful output."""
+    import jarvis.desktop as desktop
+
+    fake = _RecordingWebview(start_error=RuntimeError("headless"))
+    monkeypatch.setitem(sys.modules, "webview", fake)
+    monkeypatch.setenv("JARVIS_NO_GUI_ERRORS", "1")
+    monkeypatch.setattr("jarvis.config.DATA_DIR", tmp_path)
+
+    assert desktop.run_desktop(port=0) == 1
+    assert len(fake.windows) == 1                   # only the app window: no dialog...
+    assert "headless" in "".join(
+        (tmp_path / "claw-crash.log").read_text(encoding="utf-8")  # ...but the reason was kept
+    )
 
 
 def test_error_page_escapes_the_message():

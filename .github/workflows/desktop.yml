@@ -51,6 +51,9 @@ jobs:
           pip install -r requirements-dev.txt pyinstaller
 
       - name: Tests
+        env:
+          # No display on a runner: a crash dialog would block forever.
+          JARVIS_NO_GUI_ERRORS: "1"
         run: python -m pytest -q
 
       - name: Build

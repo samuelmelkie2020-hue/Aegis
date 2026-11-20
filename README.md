@@ -179,6 +179,7 @@ Environment variables:
 | `JARVIS_TOKEN_FILE` | `./.jarvis_token` | Where the generated token is stored |
 | `JARVIS_ALLOWED_HOSTS` | *(loopback + preview)* | Comma-separated extra `Host` values to accept |
 | `JARVIS_EMBED_TOKEN` | `true` on localhost | Force embedding (or not embedding) the token in the served page |
+| `JARVIS_NO_GUI_ERRORS` | off | `1` skips the crash window and only writes `claw-crash.log` (used by CI and headless machines) |
 | `JARVIS_DATA_DIR` | platform data folder | Where the config, token and clapboard files live (ignored when `JARVIS_CONFIG` is set) |
 | `JARVIS_ALLOW_READ_OUTSIDE_HOME` | off | `1` lets the file tools read outside your home folder (credentials stay blocked) |
 | `JARVIS_ALLOW_WRITE_OUTSIDE_HOME` | off | `1` lets `write_file` write outside your home folder (config and tokens stay blocked) |
@@ -189,7 +190,7 @@ Environment variables:
 
 ```bash
 pip install -r requirements-dev.txt   # runtime deps + pytest + ruff
-python -m pytest -q                   # 204 tests, ~3s, no display or API key needed
+python -m pytest -q                   # 206 tests, ~3s, no display or API key needed
 ruff check .                          # lint (config lives in pyproject.toml)
 python run.py --self-check            # diagnose a machine: data dir, server, webview
 node --check jarvis/static/app.js     # front-end syntax

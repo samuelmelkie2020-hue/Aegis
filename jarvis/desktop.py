@@ -39,6 +39,7 @@ WINDOW_HEIGHT = 840
 MIN_SIZE = (900, 620)
 BROWSER_COLOR = "#060b16"
 STARTUP_TIMEOUT = 30.0
+ERROR_WINDOW_TIMEOUT = 20.0  # never block forever on a crash dialog
 
 
 def find_free_port(preferred: int) -> int:
@@ -321,8 +322,14 @@ def _report_fatal(exc: Exception, *, page: str | None = None) -> None:
     """Tell the user something useful even when there is no terminal.
 
     A windowed build (`console=False`) swallows stdout, so a startup failure
-    would otherwise look like "nothing happened". Three layers, because the
-    frozen bundle excludes tkinter: write a log, print, then try a real window.
+    would otherwise look like "nothing happened".
+
+    Order matters, and one option is deliberately missing: a **modal** dialog
+    (tkinter) is not used. In CI it blocks forever on a click that never comes,
+    and on a desktop it can end up hidden behind the project window while the
+    user waits for something that already failed. So: always write the log,
+    then show the error in a real window if one can be opened, and otherwise
+    just leave a message the user can find.
     """
     import traceback
 
@@ -339,33 +346,44 @@ def _report_fatal(exc: Exception, *, page: str | None = None) -> None:
     except Exception:  # pragma: no cover
         pass
 
-    message = f"{exc}\n\n{location}".strip()
     print(f"\n  Could not start Claw: {exc}\n")
     if location:
         print(f"  Details written to {location}\n")
 
-    if page:
-        # Preferred in a frozen build: the webview is already imported (we only
-        # get here after the import succeeded), so no extra toolkit is needed.
-        try:
-            import webview
+    if not page:
+        return
+    if os.environ.get("JARVIS_NO_GUI_ERRORS"):
+        # Headless (CI, a service): a window here would block with nobody to
+        # close it. The log above is the record.
+        return
+    try:  # the webview is already imported: we only get here after it was
+        import webview
 
-            webview.create_window("Claw could not start", html=page(error=exc, log=location))
-            webview.start()
-            return
-        except Exception:  # pragma: no cover - display problems etc.
-            pass
+        webview.create_window("Claw could not start", html=page(error=exc, log=location))
+        _show_without_blocking(webview)
+    except Exception:  # pragma: no cover - no display, no backend, or headless
+        log.warning("Could not show the error window", exc_info=True)
 
-    try:  # source installs: an OS-level message box, no toolkit of ours needed
-        import tkinter
-        import tkinter.messagebox
 
-        root = tkinter.Tk()
-        root.withdraw()
-        tkinter.messagebox.showerror("Claw could not start", message)
-        root.destroy()
-    except Exception:
-        pass
+def _show_without_blocking(webview, timeout: float | None = None) -> None:
+    """Open a window, but never wait on it forever.
+
+    ``webview.start()`` can block without raising when there is no usable
+    display, and a message nobody can dismiss is worse than a log line: it
+    hides the failure. Runs it on a daemon thread and gives up quietly.
+    """
+    thread = threading.Thread(
+        target=_swallow, args=(webview.start,), name="jarvis-error-window", daemon=True
+    )
+    thread.start()
+    thread.join(ERROR_WINDOW_TIMEOUT if timeout is None else timeout)
+
+
+def _swallow(func) -> None:
+    try:
+        func()
+    except Exception:  # pragma: no cover - the point is to ignore it
+        log.warning("Error window failed", exc_info=True)
 
 
 def run_desktop(*, port: int | None = None, debug: bool = False) -> int:
