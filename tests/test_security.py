@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 import stat
+import sys
 
 import pytest
 
@@ -52,12 +53,29 @@ def test_token_works_as_a_header(client):
     assert http.get("/api/health", headers=auth).status_code == 200
 
 
+@pytest.mark.skipif(
+    sys.platform.startswith("win"), reason="windows protects the token with an ACL, not mode bits"
+)
 def test_token_file_is_owner_only(client, paths):
     from jarvis.security import get_token
 
     get_token()
     mode = stat.S_IMODE(os.stat(paths.token).st_mode)
     assert mode == 0o600, f"token file is {oct(mode)}, expected 0600"
+
+
+def test_token_file_is_restricted_on_creation(paths, monkeypatch):
+    """Every platform must lock the token down, by whichever mechanism it has."""
+    from jarvis import config, security
+
+    restricted = []
+    monkeypatch.setattr(config, "_restrict", lambda path: restricted.append(str(path)))
+    monkeypatch.setattr(security, "TOKEN_FILE", paths.token.parent / "fresh_token")
+    monkeypatch.delenv("JARVIS_TOKEN", raising=False)
+
+    token = security.get_token()
+
+    assert token and restricted == [str(security.TOKEN_FILE)]
 
 
 def test_token_is_stable_across_calls(paths):
