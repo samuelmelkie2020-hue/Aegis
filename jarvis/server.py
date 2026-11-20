@@ -14,6 +14,7 @@ import base64
 import json
 import logging
 import os
+import time
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, Query, Request, status
@@ -178,6 +179,71 @@ def health() -> dict:
         # Same decision the agent makes (is_demo_mode), so they cannot disagree.
         "demo": is_demo_mode(cfg),
         "exposure": describe_exposure(os.environ.get("JARVIS_HOST", "127.0.0.1")),
+    }
+
+
+@app.get("/api/stats", dependencies=API)
+def stats() -> dict:
+    """Live machine telemetry for the HUD, in the shape the UI draws.
+
+    Read-only and cheap: the HUD polls it every couple of seconds. ``None``
+    means "this machine cannot report it" (no battery, no temperature sensor),
+    which the UI renders as a dash rather than a fake zero.
+    """
+    try:
+        import psutil
+    except ImportError:  # pragma: no cover - psutil is a hard dependency
+        return {"ok": False, "detail": "psutil is not installed"}
+
+    def _temperature() -> float | None:
+        try:
+            sensors = psutil.sensors_temperatures()
+        except (AttributeError, OSError):
+            return None
+        for name in ("coretemp", "k10temp", "acpitz", "cpu_thermal", "cpu-thermal"):
+            if sensors.get(name):
+                return round(sensors[name][0].current, 1)
+        for entries in sensors.values():
+            if entries:
+                return round(entries[0].current, 1)
+        return None
+
+    try:
+        load_one = psutil.getloadavg()[0]
+    except (AttributeError, OSError):
+        load_one = None
+
+    try:
+        battery = psutil.sensors_battery()
+    except (AttributeError, OSError):
+        battery = None
+
+    disk = None
+    try:
+        usage = psutil.disk_usage(str(Path.home()))
+        disk = {"percent": usage.percent, "free_gb": round(usage.free / 1e9, 1)}
+    except OSError:
+        pass
+
+    virtual = psutil.virtual_memory()
+    return {
+        "ok": True,
+        "cpu": {
+            "percent": psutil.cpu_percent(interval=None),
+            "cores": psutil.cpu_count(logical=True),
+            "load1": load_one,
+        },
+        "memory": {
+            "percent": virtual.percent,
+            "used_gb": round(virtual.used / 1e9, 1),
+            "total_gb": round(virtual.total / 1e9, 1),
+        },
+        "temperature": _temperature(),
+        "battery": None
+        if battery is None
+        else {"percent": round(battery.percent), "plugged": bool(battery.power_plugged)},
+        "disk": disk,
+        "uptime_seconds": int(time.time() - psutil.boot_time()),
     }
 
 

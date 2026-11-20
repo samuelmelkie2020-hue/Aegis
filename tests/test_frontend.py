@@ -112,6 +112,30 @@ def test_screen_image_has_meaningful_alt_text(html):
 
 
 
+
+def test_hud_telemetry_elements_exist():
+    """The gauges and bars are driven by ids; a typo shows as a blank dial."""
+    markup = (STATIC / "index.html").read_text(encoding="utf-8")
+    js = (STATIC / "app.js").read_text(encoding="utf-8")
+    for element in (
+        "gCpu", "vCpu", "gMem", "vMem", "gTmp", "vTmp",
+        "bBat", "tBat", "bDisk", "tDisk", "bLoad", "tLoad",
+        "uptime", "clock", "stateLabel",
+    ):
+        assert f'id="{element}"' in markup, f"{element} is missing from the markup"
+        assert f'"{element}"' in js, f"{element} is never updated by the script"
+
+
+def test_gauges_are_labelled_and_decorative_svgs_hidden():
+    """A dial with no visible label is just a coloured ring."""
+    markup = (STATIC / "index.html").read_text(encoding="utf-8")
+    # Split on the gauge wrapper: each block runs to the next one.
+    blocks = re.split(r'<div class="gauge">', markup)[1:]
+    assert len(blocks) >= 3
+    for block in blocks:
+        assert "<label>" in block.split("</div>\n")[0] or "<label>" in block[:900]
+        assert 'aria-hidden="true"' in block[:400], "decorative dial is exposed to screen readers"
+
 def test_every_class_the_ui_needs_is_styled():
     """A restyle must not quietly drop a class the UI depends on.
 

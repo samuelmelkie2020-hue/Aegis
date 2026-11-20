@@ -968,3 +968,219 @@ html.desktop .composer-hint kbd { font-size: 0.7rem; }
   .modal { padding: 16px; }
   .modal-actions .btn { width: 100%; }
 }
+
+/* ============================================================================
+   HUD additions: the diagnostics panel, the orb state word, and the layout the
+   mockup calls for (left rail + conversation stage).
+   ========================================================================== */
+
+.app { grid-template-columns: 372px minmax(0, 1fr); }
+
+/* ---------- Diagnostics ---------- */
+
+.diag { padding-bottom: 15px; }
+
+.panel-tag {
+  font-family: var(--font-display);
+  font-size: 0.56rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--c-dim);
+  border: 1px solid var(--c-line);
+  padding: 2px 7px;
+  white-space: nowrap;
+}
+
+.gauges {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  margin: 4px 0 14px;
+}
+
+.gauge { position: relative; text-align: center; }
+
+.gauge svg {
+  width: 100%;
+  height: auto;
+  max-width: 88px;
+  transform: rotate(-90deg);
+  overflow: visible;
+}
+
+.gauge circle {
+  fill: none;
+  stroke-width: 5;
+  stroke-linecap: round;
+}
+.gauge circle.bg { stroke: rgba(0, 229, 255, 0.1); }
+.gauge circle.fg {
+  stroke: var(--c);
+  stroke-dasharray: 226.2;
+  stroke-dashoffset: 226.2;
+  filter: drop-shadow(0 0 4px var(--c-glow));
+  transition: stroke-dashoffset 0.6s var(--ease), stroke 0.3s var(--ease);
+}
+.gauge circle.fg.hot { stroke: var(--amber); filter: drop-shadow(0 0 5px rgba(255, 176, 32, 0.6)); }
+
+.gauge .val {
+  position: absolute;
+  top: 34%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-family: var(--font-display);
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: #eaffff;
+  text-shadow: 0 0 10px var(--c-glow);
+}
+
+.gauge label {
+  display: block;
+  margin-top: 2px;
+  font-size: 0.56rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--c-dim);
+}
+
+.bars { display: flex; flex-direction: column; gap: 7px; }
+
+.bar-row {
+  display: grid;
+  grid-template-columns: 84px 1fr 62px;
+  align-items: center;
+  gap: 9px;
+  font-size: 0.66rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--c-dim);
+}
+
+.bar {
+  height: 7px;
+  background: rgba(0, 229, 255, 0.08);
+  border: 1px solid var(--c-line);
+  overflow: hidden;
+}
+.bar b {
+  display: block;
+  height: 100%;
+  width: 0;
+  background: linear-gradient(90deg, rgba(0, 229, 255, 0.5), var(--c));
+  box-shadow: 0 0 10px var(--c-glow);
+  transition: width 0.6s var(--ease);
+}
+
+.bar-row span:last-child {
+  text-align: right;
+  color: var(--text);
+  letter-spacing: 0.06em;
+  text-transform: none;
+  font-family: var(--font-display);
+  font-size: 0.62rem;
+}
+
+/* ---------- Orb + its state word ---------- */
+
+.orb-wrap { position: relative; padding: 2px 0 0; }
+
+.orb-state {
+  font-family: var(--font-display);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.4em;
+  text-transform: uppercase;
+  color: #eaffff;
+  text-align: center;
+  margin-top: -6px;
+  text-shadow: 0 0 14px var(--c-glow);
+}
+
+.orb-wrap .orb-label {
+  margin-top: 4px;
+  font-size: 0.58rem;
+  letter-spacing: 0.22em;
+  color: var(--c-dim);
+  text-shadow: none;
+}
+
+/* ---------- Chat header tools ---------- */
+
+.chat-tools { display: flex; align-items: center; gap: 10px; }
+
+#clock {
+  font-variant-numeric: tabular-nums;
+  color: var(--c);
+  border-color: var(--c-line);
+}
+
+/* The composer's ">_" prompt, from the mockup. */
+.input-wrap {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 0 13px;
+  background: #020a12;
+  border: 1px solid var(--c-line);
+  transition: border-color 0.18s var(--ease), box-shadow 0.18s var(--ease);
+}
+.input-wrap:focus-within {
+  border-color: var(--c);
+  box-shadow: 0 0 0 1px var(--c-faint), 0 0 18px rgba(0, 229, 255, 0.16);
+}
+.input-wrap > span {
+  flex: none;
+  font-family: var(--font-display);
+  font-size: 0.74rem;
+  color: var(--c);
+}
+
+#userInput {
+  border: 0;
+  background: transparent;
+  padding: 10px 0;
+}
+#userInput:focus { box-shadow: none; border: 0; }
+
+.send-btn {
+  width: auto;
+  padding: 0 18px;
+  font-family: var(--font-display);
+  font-size: 0.64rem;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
+/* Chips live inside the welcome hero now. */
+.hero-tips { gap: 8px; }
+.hero-tips .chip { font-size: 0.7rem; letter-spacing: 0.12em; text-transform: uppercase; }
+
+/* ---------- Narrow windows ---------- */
+
+@media (max-width: 1180px) {
+  .app { grid-template-columns: 320px minmax(0, 1fr); }
+}
+
+@media (max-width: 960px) {
+  .app { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr); }
+  .sidebar {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: start;
+    max-height: 46vh;
+    gap: 10px;
+  }
+  .sidebar .brand, .sidebar-foot { grid-column: 1 / -1; }
+  .orb-wrap { display: none; }
+  .diag { grid-column: 1 / -1; }
+}
+
+@media (max-width: 620px) {
+  .gauges { gap: 4px; }
+  .bar-row { grid-template-columns: 70px 1fr 54px; }
+  .send-btn { padding: 0 12px; }
+}

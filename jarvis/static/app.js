@@ -119,6 +119,10 @@ function setOrb(mode) {
   state.orb = mode;
   const labels = { idle: "Standing by", listening: "Listening…", thinking: "Thinking…", speaking: "Speaking…" };
   orbLabel.textContent = labels[mode] || "Standing by";
+  // The HUD repeats the state in large type over the orb.
+  const big = { idle: "Standby", listening: "Listening", thinking: "Processing", speaking: "Responding" };
+  const stateEl = document.getElementById("stateLabel");
+  if (stateEl) stateEl.textContent = big[mode] || "Standby";
 }
 
 function scrollBottom() {
@@ -819,6 +823,102 @@ function drawOrb() {
   if (!reduceMotion) requestAnimationFrame(drawOrb);
 }
 drawOrb();
+
+
+// ---------------------------------------------------------------------------
+// HUD telemetry
+//
+// Real numbers from /api/stats rather than the mockup's drifting randoms: the
+// gauges are a status readout, so a wrong value is worse than no value. A null
+// from the server (no battery, no temperature sensor) renders as a dash.
+// ---------------------------------------------------------------------------
+const GAUGE_CIRCUMFERENCE = 2 * Math.PI * 36;
+
+function setGauge(circleId, valueId, percent, label) {
+  const circle = document.getElementById(circleId);
+  const text = document.getElementById(valueId);
+  if (!circle || !text) return;
+  if (percent === null || percent === undefined) {
+    circle.style.strokeDashoffset = GAUGE_CIRCUMFERENCE;
+    text.textContent = "—";
+    return;
+  }
+  const clamped = Math.max(0, Math.min(100, percent));
+  circle.style.strokeDashoffset = GAUGE_CIRCUMFERENCE * (1 - clamped / 100);
+  circle.classList.toggle("hot", clamped > 80);
+  text.textContent = label;
+}
+
+function setBar(barId, textId, percent, label) {
+  const bar = document.getElementById(barId);
+  const text = document.getElementById(textId);
+  if (!bar || !text) return;
+  bar.style.width = `${percent === null || percent === undefined ? 0 : Math.max(0, Math.min(100, percent))}%`;
+  text.textContent = label;
+}
+
+function formatUptime(seconds) {
+  if (!seconds && seconds !== 0) return "—";
+  const days = Math.floor(seconds / 86400);
+  const hours = Math.floor((seconds % 86400) / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  if (days) return `UP ${days}d ${hours}h`;
+  if (hours) return `UP ${hours}h ${minutes}m`;
+  return `UP ${minutes}m`;
+}
+
+async function refreshStats() {
+  try {
+    const res = await api("/api/stats");
+    if (!res.ok) throw new Error(`Server error ${res.status}`);
+    const stats = await res.json();
+    if (!stats.ok) throw new Error(stats.detail || "unavailable");
+
+    setGauge("gCpu", "vCpu", stats.cpu && stats.cpu.percent, `${Math.round(stats.cpu.percent)}%`);
+    setGauge("gMem", "vMem", stats.memory && stats.memory.percent, `${Math.round(stats.memory.percent)}%`);
+
+    const temp = stats.temperature;
+    setGauge("gTmp", "vTmp", temp === null ? null : Math.min(100, (temp / 100) * 100), temp === null ? "—" : `${Math.round(temp)}°`);
+
+    if (stats.battery) {
+      setBar("bBat", "tBat", stats.battery.percent, `${stats.battery.percent}%${stats.battery.plugged ? " ⚡" : ""}`);
+    } else {
+      setBar("bBat", "tBat", null, "—");
+    }
+
+    if (stats.disk) setBar("bDisk", "tDisk", stats.disk.percent, `${stats.disk.free_gb} GB free`);
+    else setBar("bDisk", "tDisk", null, "—");
+
+    // Load is per-core average, so normalise against the core count.
+    const load = stats.cpu && stats.cpu.load1;
+    const cores = (stats.cpu && stats.cpu.cores) || 1;
+    if (load === null || load === undefined) {
+      setBar("bLoad", "tLoad", null, "—");
+    } else {
+      setBar("bLoad", "tLoad", (load / cores) * 100, load.toFixed(2));
+    }
+
+    const uptimeEl = document.getElementById("uptime");
+    if (uptimeEl) uptimeEl.textContent = formatUptime(stats.uptime_seconds);
+  } catch (err) {
+    // Keep the last good reading on screen; the HUD must not shout on a blip.
+    console.warn("stats unavailable:", err.message || err);
+  }
+}
+
+const clockEl = document.getElementById("clock");
+if (clockEl) {
+  const tickClock = () => {
+    clockEl.textContent = new Date().toLocaleTimeString([], {
+      hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false,
+    });
+  };
+  tickClock();
+  setInterval(tickClock, 1000);
+}
+
+refreshStats();
+setInterval(refreshStats, 3000);
 
 // ---------------------------------------------------------------------------
 // Boot
