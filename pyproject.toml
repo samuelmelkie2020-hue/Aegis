@@ -3,7 +3,7 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "claw-jarvis"
+name = "aegis-pc"
 version = "1.0.0"
 description = "A local AI assistant that can see your screen and control your PC"
 readme = "README.md"
@@ -32,17 +32,17 @@ dev = [
 ]
 
 [project.scripts]
-claw = "jarvis.__main__:main"
-claw-web = "run:main"
+aegis = "aegis.__main__:main"
+aegis-web = "run:main"
 
 [project.urls]
 Homepage = "https://github.com/samuelmelkie2020-hue/claw"
 
 [tool.setuptools]
-packages = ["jarvis"]
+packages = ["aegis"]
 
 [tool.setuptools.package-data]
-jarvis = ["static/*"]
+aegis = ["static/*"]
 
 # ---------------------------------------------------------------------------
 # Tooling. Committed so `ruff check` and `pytest` agree for every contributor;

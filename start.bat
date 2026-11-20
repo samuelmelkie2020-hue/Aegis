@@ -1,9 +1,9 @@
 @echo off
 setlocal
-title Claw - Your Jarvis
+title Aegis - Your Aegis
 cd /d "%~dp0"
 
-if not "%JARVIS_PORT%"=="" (set "PORT=%JARVIS_PORT%") else (set "PORT=8000")
+if not "%AEGIS_PORT%"=="" (set "PORT=%AEGIS_PORT%") else (set "PORT=8000")
 
 where python >nul 2>nul
 if errorlevel 1 (
@@ -39,7 +39,7 @@ set "STAMPED="
 if exist "%STAMP%" set /p STAMPED=<"%STAMP%"
 
 if not "%STAMPED%"=="%DEPS_HASH%" (
-  echo Installing Jarvis components, one moment...
+  echo Installing Aegis components, one moment...
   python -m pip install --upgrade pip >nul 2>nul
   python -m pip install -r requirements.txt
   if errorlevel 1 (
@@ -54,7 +54,7 @@ if not "%STAMPED%"=="%DEPS_HASH%" (
 
 echo.
 echo    ==========================================
-echo     Claw is starting as a desktop app.
+echo     Aegis is starting as a desktop app.
 echo     Close the window to quit.
 echo     (Browser instead: start.bat --web)
 echo    ==========================================

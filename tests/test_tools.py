@@ -11,7 +11,7 @@ import pytest
 # ---------------------------------------------------------------------------
 
 def test_reads_inside_home_are_allowed(paths):
-    from jarvis.tools import execute_tool
+    from aegis.tools import execute_tool
 
     target = paths.home / "notes.txt"
     target.write_text("hello", encoding="utf-8")
@@ -25,7 +25,7 @@ def test_reads_inside_home_are_allowed(paths):
     [".ssh/id_rsa", ".aws/credentials", ".docker/config.json", ".config/gh/hosts.yml", ".env"],
 )
 def test_credential_locations_are_refused(paths, relative):
-    from jarvis.tools import execute_tool
+    from aegis.tools import execute_tool
 
     target = paths.home / relative
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -38,7 +38,7 @@ def test_credential_locations_are_refused(paths, relative):
 
 def test_a_normal_config_folder_is_still_readable(paths):
     """Over-blocking ~/.config would break reading ordinary app settings."""
-    from jarvis.tools import execute_tool
+    from aegis.tools import execute_tool
 
     target = paths.home / ".config/Code/User/settings.json"
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -47,7 +47,7 @@ def test_a_normal_config_folder_is_still_readable(paths):
 
 
 def test_reads_outside_home_are_refused(paths):
-    from jarvis.tools import execute_tool
+    from aegis.tools import execute_tool
 
     result = execute_tool("read_file", {"path": "/etc/hostname"})
     assert result["ok"] is False
@@ -55,17 +55,17 @@ def test_reads_outside_home_are_refused(paths):
 
 
 def test_read_outside_home_can_be_opted_into(paths, monkeypatch):
-    from jarvis.tools import execute_tool
+    from aegis.tools import execute_tool
 
     target = _tmp_file("opt-in.txt", "opted in")
-    monkeypatch.setenv("JARVIS_ALLOW_READ_OUTSIDE_HOME", "1")
+    monkeypatch.setenv("AEGIS_ALLOW_READ_OUTSIDE_HOME", "1")
     result = execute_tool("read_file", {"path": target})
     assert result["ok"] is True
     assert "opted in" in result["result"]
 
 
 def test_symlink_cannot_hop_into_a_protected_folder(paths):
-    from jarvis.tools import execute_tool
+    from aegis.tools import execute_tool
 
     secret = paths.home / ".ssh" / "id_rsa"
     secret.parent.mkdir(parents=True, exist_ok=True)
@@ -78,9 +78,9 @@ def test_symlink_cannot_hop_into_a_protected_folder(paths):
     assert "PRIVATE" not in result["result"]
 
 
-def test_jarvis_own_config_and_token_are_unreadable(paths):
-    from jarvis import config
-    from jarvis.tools import execute_tool
+def test_aegis_own_config_and_token_are_unreadable(paths):
+    from aegis import config
+    from aegis.tools import execute_tool
 
     config.save_config({"llm": {"api_key": "sk-must-not-be-read"}})
     for target in (paths.config, paths.token):
@@ -90,15 +90,15 @@ def test_jarvis_own_config_and_token_are_unreadable(paths):
 
 
 def test_writes_outside_home_are_refused(paths):
-    from jarvis.tools import execute_tool
+    from aegis.tools import execute_tool
 
-    result = execute_tool("write_file", {"path": "/etc/jarvis-test.conf", "content": "x"})
+    result = execute_tool("write_file", {"path": "/etc/aegis-test.conf", "content": "x"})
     assert result["ok"] is False
     assert "outside your home" in result["result"]
 
 
 def test_writes_inside_home_work(paths):
-    from jarvis.tools import execute_tool
+    from aegis.tools import execute_tool
 
     target = paths.home / "todo.txt"
     assert execute_tool("write_file", {"path": str(target), "content": "milk"})["ok"] is True
@@ -107,7 +107,7 @@ def test_writes_inside_home_work(paths):
 
 def test_writing_a_shell_rc_file_is_allowed_but_config_is_not(paths):
     """Persistence via ~/.ssh is blocked; ordinary files are not."""
-    from jarvis.tools import execute_tool
+    from aegis.tools import execute_tool
 
     assert execute_tool("write_file", {"path": str(paths.home / ".bashrc"), "content": "x"})["ok"]
     denied = execute_tool("write_file", {"path": str(paths.config), "content": "{}"})
@@ -115,7 +115,7 @@ def test_writing_a_shell_rc_file_is_allowed_but_config_is_not(paths):
 
 
 def test_listing_a_protected_folder_is_refused(paths):
-    from jarvis.tools import execute_tool
+    from aegis.tools import execute_tool
 
     (paths.home / ".ssh").mkdir(parents=True, exist_ok=True)
     (paths.home / ".ssh" / "id_rsa").write_text("PRIVATE", encoding="utf-8")
@@ -125,7 +125,7 @@ def test_listing_a_protected_folder_is_refused(paths):
 
 
 def test_search_never_returns_credential_paths(paths):
-    from jarvis.tools import execute_tool
+    from aegis.tools import execute_tool
 
     secret = paths.home / ".ssh" / "id_rsa"
     secret.parent.mkdir(parents=True, exist_ok=True)
@@ -138,7 +138,7 @@ def test_search_never_returns_credential_paths(paths):
 
 
 def test_large_files_are_read_in_bounded_chunks(paths):
-    from jarvis.tools import MAX_FILE_READ, execute_tool
+    from aegis.tools import MAX_FILE_READ, execute_tool
 
     target = paths.home / "big.txt"
     target.write_text("A" * 2_000_000, encoding="utf-8")
@@ -167,14 +167,14 @@ def test_large_files_are_read_in_bounded_chunks(paths):
     ],
 )
 def test_secrets_are_redacted(raw, secret):
-    from jarvis.safety import redact
+    from aegis.safety import redact
 
     assert secret not in redact(raw)
     assert "redacted" in redact(raw).lower()
 
 
 def test_pem_blocks_are_redacted():
-    from jarvis.safety import redact
+    from aegis.safety import redact
 
     pem = "-----BEGIN RSA PRIVATE KEY-----\nMIIEow\n-----END RSA PRIVATE KEY-----"
     out = redact(pem)
@@ -183,7 +183,7 @@ def test_pem_blocks_are_redacted():
 
 
 def test_ordinary_text_is_untouched():
-    from jarvis.safety import redact
+    from aegis.safety import redact
 
     text = "Build finished in 4.2s; 12 tests passed on port 8000."
     assert redact(text) == text
@@ -191,7 +191,7 @@ def test_ordinary_text_is_untouched():
 
 def test_tool_output_is_redacted_before_reaching_the_model(paths):
     """The dispatcher, not just the helper, must scrub output."""
-    from jarvis.tools import execute_tool
+    from aegis.tools import execute_tool
 
     result = execute_tool("run_command", {"command": "echo key=sk-live-abcdefghijklmnopqrstu"})
     assert "abcdefghijklmnopqrstu" not in result["result"]
@@ -205,7 +205,7 @@ def test_tool_output_is_redacted_before_reaching_the_model(paths):
 @pytest.fixture()
 def fake_screen(monkeypatch, paths):
     """Pretend the display is 2560x1440 and record clicks."""
-    from jarvis import tools
+    from aegis import tools
 
     state = {"clicked": None, "pressed": None}
 
@@ -248,7 +248,7 @@ def fake_screen(monkeypatch, paths):
 
 
 def test_screenshot_reports_downscale(fake_screen):
-    from jarvis.tools import MAX_IMAGE_WIDTH, execute_tool
+    from aegis.tools import MAX_IMAGE_WIDTH, execute_tool
 
     result = execute_tool("see_screen", {})
     assert result["image_width"] == MAX_IMAGE_WIDTH
@@ -257,7 +257,7 @@ def test_screenshot_reports_downscale(fake_screen):
 
 
 def test_click_maps_image_coordinates_back_to_the_screen(fake_screen):
-    from jarvis.tools import execute_tool
+    from aegis.tools import execute_tool
 
     execute_tool("see_screen", {})
     execute_tool("click", {"x": 640, "y": 360})
@@ -265,7 +265,7 @@ def test_click_maps_image_coordinates_back_to_the_screen(fake_screen):
 
 
 def test_click_refuses_points_off_screen(fake_screen):
-    from jarvis.tools import execute_tool
+    from aegis.tools import execute_tool
 
     execute_tool("see_screen", {})
     result = execute_tool("click", {"x": 5000, "y": 5000})
@@ -274,14 +274,14 @@ def test_click_refuses_points_off_screen(fake_screen):
 
 
 def test_click_rejects_negative_coordinates(fake_screen):
-    from jarvis.tools import execute_tool
+    from aegis.tools import execute_tool
 
     assert execute_tool("click", {"x": -5, "y": 10})["ok"] is False
     assert fake_screen["clicked"] is None
 
 
 def test_click_rejects_non_numeric_coordinates(fake_screen):
-    from jarvis.tools import execute_tool
+    from aegis.tools import execute_tool
 
     result = execute_tool("click", {"x": "middle", "y": 10})
     assert result["ok"] is False
@@ -292,7 +292,7 @@ def test_click_rejects_non_numeric_coordinates(fake_screen):
 # ---------------------------------------------------------------------------
 
 def test_unknown_tool_is_an_error_not_a_crash():
-    from jarvis.tools import execute_tool
+    from aegis.tools import execute_tool
 
     result = execute_tool("delete_the_internet", {})
     assert result["ok"] is False
@@ -307,7 +307,7 @@ def test_unknown_tool_is_an_error_not_a_crash():
     ("list_files", {"path": 12345}),
 ])
 def test_bad_arguments_never_raise(name, args):
-    from jarvis.tools import execute_tool
+    from aegis.tools import execute_tool
 
     result = execute_tool(name, args)
     assert isinstance(result, dict) and "result" in result
@@ -318,7 +318,7 @@ def test_press_keys_tolerates_a_string(fake_screen):
 
     A bare string used to be iterated into five separate key presses.
     """
-    from jarvis.tools import press_keys
+    from aegis.tools import press_keys
 
     result = press_keys("enter")
     assert result["ok"] is True
@@ -326,14 +326,14 @@ def test_press_keys_tolerates_a_string(fake_screen):
 
 
 def test_press_keys_handles_a_chord(fake_screen):
-    from jarvis.tools import press_keys
+    from aegis.tools import press_keys
 
     assert press_keys(["ctrl", "s"])["ok"] is True
     assert fake_screen["pressed"] == ["ctrl", "s"]
 
 
 def test_press_keys_rejects_an_empty_list(fake_screen):
-    from jarvis.tools import press_keys
+    from aegis.tools import press_keys
 
     result = press_keys([])
     assert result["ok"] is False
@@ -343,7 +343,7 @@ def test_press_keys_rejects_an_empty_list(fake_screen):
 def _tmp_file(name: str, content: str) -> str:
     import tempfile
 
-    path = os.path.join(tempfile.mkdtemp(prefix="jarvis-optin-"), name)
+    path = os.path.join(tempfile.mkdtemp(prefix="aegis-optin-"), name)
     with open(path, "w", encoding="utf-8") as handle:
         handle.write(content)
     return path

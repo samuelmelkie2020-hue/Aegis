@@ -1,4 +1,4 @@
-/* ============ Claw / Jarvis — front-end logic ============ */
+/* ============ Aegis — front-end logic ============ */
 "use strict";
 
 // ---------------------------------------------------------------------------
@@ -43,7 +43,7 @@ const state = {
   busy: false,
   orb: "idle",            // idle | listening | thinking | speaking
   settings: {
-    assistant_name: "Jarvis",
+    assistant_name: "Aegis",
     safe_mode: true,
     voice_replies: true,
     llm: { base_url: "", model: "", api_key_set: false, api_key_masked: "" },
@@ -57,8 +57,8 @@ const state = {
 // browser-only hints are pointless. In the browser build nothing here runs.
 const isDesktop = Boolean(window.pywebview && window.pywebview.api);
 
-window.__jarvisOpenSettings = () => openSettings();
-window.__jarvisNewChat = () => document.getElementById("clearChat")?.click();
+window.__aegisOpenSettings = () => openSettings();
+window.__aegisNewChat = () => document.getElementById("clearChat")?.click();
 
 function initDesktop() {
   if (!window.pywebview || !window.pywebview.api) return;
@@ -76,17 +76,17 @@ window.addEventListener("pywebviewready", initDesktop);
 // The token is injected by /config.js for loopback and preview requests only.
 // When it is absent the page is being served from somewhere we do not trust, so
 // every /api call will (correctly) come back 401.
-const JARVIS_TOKEN = window.JARVIS_TOKEN || "";
+const AEGIS_TOKEN = window.AEGIS_TOKEN || "";
 
 async function api(path, options = {}) {
   const opts = { credentials: "same-origin", ...options };
-  if (JARVIS_TOKEN) {
-    opts.headers = { ...(opts.headers || {}), "X-Jarvis-Token": JARVIS_TOKEN };
+  if (AEGIS_TOKEN) {
+    opts.headers = { ...(opts.headers || {}), "X-Aegis-Token": AEGIS_TOKEN };
   }
   const res = await fetch(path, opts);
   if (res.status === 401) {
     throw new Error(
-      "Locked. Open the link printed in the Jarvis terminal to unlock the app."
+      "Locked. Open the link printed in the Aegis terminal to unlock the app."
     );
   }
   return res;
@@ -144,7 +144,7 @@ function updateModelStatus(cfg) {
   modelDot.classList.toggle("live", hasBrain);
   modelStatus.textContent = hasBrain ? `${llm.model || "AI"} connected` : "Demo brain";
   document.querySelector(".brand-sub").textContent =
-    hasBrain ? `Claw · ${llm.model || "AI"} connected` : "Claw · demo brain";
+    hasBrain ? `Aegis · ${llm.model || "AI"} connected` : "Aegis · demo brain";
 }
 
 // ---------------------------------------------------------------------------
@@ -154,7 +154,7 @@ function addMessage(role, html) {
   document.getElementById("welcomeHero")?.remove();
   const wrap = document.createElement("div");
   wrap.className = `msg ${role}`;
-  const avatar = role === "user" ? "🧑" : "🦞";
+  const avatar = role === "user" ? "🧑" : "🛡";
   wrap.innerHTML = `
     <div class="avatar">${avatar}</div>
     <div class="msg-body">
@@ -219,7 +219,7 @@ function addApprovalCard(data) {
   card.className = "approval-card";
   card.innerHTML = `
     <h4>🛡 Approval needed</h4>
-    <p>Jarvis wants to act on your PC:</p>
+    <p>Aegis wants to act on your PC:</p>
     <div class="approval-desc">${esc(data.description || data.name)}</div>
     <div class="approval-actions">
       <button class="btn approve">✅ Approve &amp; run</button>
@@ -318,7 +318,7 @@ async function sendMessage(text, opts = {}) {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       // Only the message and history cross the wire. safe_mode and the LLM
-      // endpoint are decided by the server (see jarvis/server.py).
+      // endpoint are decided by the server (see aegis/server.py).
       body: JSON.stringify({ message, history: state.history }),
     });
 
@@ -588,7 +588,7 @@ function applyConfig(cfg) {
   state.settings = cfg;
   safeModeEl.checked = cfg.safe_mode !== false;
   voiceRepliesEl.checked = cfg.voice_replies !== false;
-  assistantNameEl.textContent = cfg.assistant_name || "Jarvis";
+  assistantNameEl.textContent = cfg.assistant_name || "Aegis";
   setName.value = cfg.assistant_name || "";
   setBaseUrl.value = cfg.llm?.base_url || "";
   setProvider.value = inferProvider(cfg.llm?.base_url);
@@ -665,7 +665,7 @@ settingsModal.addEventListener("click", (e) => { if (e.target === settingsModal)
 saveSettings.addEventListener("click", async () => {
   const candidateKey = setApiKey.value.trim();
   const payload = {
-    assistant_name: setName.value.trim() || "Jarvis",
+    assistant_name: setName.value.trim() || "Aegis",
     safe_mode: safeModeEl.checked,
     voice_replies: voiceRepliesEl.checked,
     llm: {

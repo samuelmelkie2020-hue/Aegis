@@ -64,7 +64,7 @@ def _session_fingerprint(token: str) -> str:
     # Not a secret in itself; just enough to bind a card to one session.
     import hashlib
 
-    return hashlib.sha256(("jarvis-approval:" + token).encode()).hexdigest()[:16]
+    return hashlib.sha256(("aegis-approval:" + token).encode()).hexdigest()[:16]
 
 
 def _prune(now: float) -> None:

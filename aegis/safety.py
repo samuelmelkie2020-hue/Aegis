@@ -3,7 +3,7 @@
 Two ideas, both cheap and both load-bearing:
 
 * **Sensitive locations are off-limits to the read-only tools.** Whoever is
-  driving Jarvis is not always the account owner — a prompt injection in a web
+  driving Aegis is not always the account owner — a prompt injection in a web
   page, a file, or a screenshot can ask for ``~/.ssh/id_rsa``. Reads outside the
   home folder and writes outside it are refused unless the user opts out.
 * **Tool output is scrubbed before it reaches the model.** If a dangerous
@@ -43,12 +43,12 @@ BLOCKED_FILE_PATTERNS = (
     ".git-credentials", "credentials", "credentials.*", "*.pgpass", "*.kdbx",
     "secring.*", "*.ovpn", "known_hosts", "authorized_keys",
 )
-# Jarvis's own secrets: the access token must never be readable by the agent.
-OWN_SECRET_NAMES = {CONFIG_PATH.name, (CONFIG_PATH.parent / ".jarvis_token").name}
+# Aegis's own secrets: the access token must never be readable by the agent.
+OWN_SECRET_NAMES = {CONFIG_PATH.name, (CONFIG_PATH.parent / ".aegis_token").name}
 
 # Paths an opt-out may re-enable (still never the crypto/credential material).
-READ_ESCAPE_ENV = "JARVIS_ALLOW_READ_OUTSIDE_HOME"
-WRITE_ESCAPE_ENV = "JARVIS_ALLOW_WRITE_OUTSIDE_HOME"
+READ_ESCAPE_ENV = "AEGIS_ALLOW_READ_OUTSIDE_HOME"
+WRITE_ESCAPE_ENV = "AEGIS_ALLOW_WRITE_OUTSIDE_HOME"
 
 
 def _flag(name: str) -> bool:
@@ -58,8 +58,8 @@ def _flag(name: str) -> bool:
 def _sensitive_reason(p: Path) -> str | None:
     """Why this path is off-limits, or None if it is fine."""
     name = p.name
-    if name in OWN_SECRET_NAMES or ".jarvis_token" in name:
-        return "it stores Jarvis's own API key or access token"
+    if name in OWN_SECRET_NAMES or ".aegis_token" in name:
+        return "it stores Aegis's own API key or access token"
     if name in (".git",) or name.startswith(".env"):
         return "it may contain credentials or repository internals"
     as_posix = p.as_posix()
@@ -120,8 +120,8 @@ def check_writable(path: str | Path) -> tuple[Path | None, str | None]:
         return None, f"could not resolve that path ({exc})"
 
     name = p.name
-    if name in OWN_SECRET_NAMES or ".jarvis_token" in name:
-        return None, f"refused to write {p} — it holds Jarvis's own credentials."
+    if name in OWN_SECRET_NAMES or ".aegis_token" in name:
+        return None, f"refused to write {p} — it holds Aegis's own credentials."
     reason = _sensitive_reason(p)
     if reason:
         return None, f"refused to write {p} — {reason}."

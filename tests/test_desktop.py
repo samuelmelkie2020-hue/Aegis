@@ -21,26 +21,26 @@ import pytest
 # ---------------------------------------------------------------------------
 
 def test_source_mode_keeps_config_beside_the_repo(monkeypatch):
-    from jarvis import config
+    from aegis import config
 
-    monkeypatch.delenv("JARVIS_DATA_DIR", raising=False)
+    monkeypatch.delenv("AEGIS_DATA_DIR", raising=False)
     monkeypatch.setattr(config, "is_frozen", lambda: False)
-    assert config.user_data_dir().name != "Claw"
-    assert (config.user_data_dir() / "jarvis_config.json").exists() or True
+    assert config.user_data_dir().name != "Aegis"
+    assert (config.user_data_dir() / "aegis_config.json").exists() or True
 
 
 @pytest.mark.parametrize(
     "platform_name,env,expected_parts",
     [
-        ("Windows", {"APPDATA": "/fake/appdata"}, ("Claw",)),
-        ("Darwin", {}, ("Library", "Application Support", "Claw")),
-        ("Linux", {"XDG_CONFIG_HOME": "/fake/xdg"}, ("fake", "xdg", "Claw")),
+        ("Windows", {"APPDATA": "/fake/appdata"}, ("Aegis",)),
+        ("Darwin", {}, ("Library", "Application Support", "Aegis")),
+        ("Linux", {"XDG_CONFIG_HOME": "/fake/xdg"}, ("fake", "xdg", "Aegis")),
     ],
 )
 def test_frozen_app_uses_the_per_user_location(monkeypatch, platform_name, env, expected_parts):
-    from jarvis import config
+    from aegis import config
 
-    monkeypatch.delenv("JARVIS_DATA_DIR", raising=False)
+    monkeypatch.delenv("AEGIS_DATA_DIR", raising=False)
     monkeypatch.setattr(config, "is_frozen", lambda: True)
     monkeypatch.setattr(config.platform, "system", lambda: platform_name)
     for key, value in env.items():
@@ -57,14 +57,14 @@ def test_frozen_app_uses_the_per_user_location(monkeypatch, platform_name, env, 
 
 
 def test_data_dir_can_be_overridden(monkeypatch, tmp_path):
-    from jarvis import config
+    from aegis import config
 
-    monkeypatch.setenv("JARVIS_DATA_DIR", str(tmp_path / "custom"))
+    monkeypatch.setenv("AEGIS_DATA_DIR", str(tmp_path / "custom"))
     assert config.user_data_dir() == tmp_path / "custom"
 
 
 def test_is_frozen_reads_pyinstaller_marker(monkeypatch):
-    from jarvis import config
+    from aegis import config
 
     monkeypatch.delattr(sys, "frozen", raising=False)
     assert config.is_frozen() is False
@@ -77,7 +77,7 @@ def test_is_frozen_reads_pyinstaller_marker(monkeypatch):
 # ---------------------------------------------------------------------------
 
 def test_preferred_port_is_used_when_free():
-    from jarvis.desktop import find_free_port
+    from aegis.desktop import find_free_port
 
     port = find_free_port(0)
     assert 1024 < port < 65536
@@ -88,7 +88,7 @@ def test_busy_port_falls_back_instead_of_crashing():
     """A second launch used to die with "address already in use"."""
     import socket
 
-    from jarvis.desktop import find_free_port
+    from aegis.desktop import find_free_port
 
     taken = socket.socket()
     taken.bind(("127.0.0.1", 0))
@@ -107,14 +107,14 @@ def test_busy_port_falls_back_instead_of_crashing():
 # ---------------------------------------------------------------------------
 
 def test_server_thread_serves_the_app_and_stops_cleanly():
-    from jarvis.desktop import find_free_port, start_server, stop_server
+    from aegis.desktop import find_free_port, start_server, stop_server
 
     handle = start_server(find_free_port(0))
     try:
         import urllib.error
         import urllib.request
 
-        from jarvis.security import get_token
+        from aegis.security import get_token
 
         # unauthenticated: the socket is live and correctly refuses
         with pytest.raises(urllib.error.HTTPError) as excinfo:
@@ -122,7 +122,7 @@ def test_server_thread_serves_the_app_and_stops_cleanly():
         assert excinfo.value.code == 401
 
         request = urllib.request.Request(
-            f"{handle.base_url}/api/health", headers={"X-Jarvis-Token": get_token()}
+            f"{handle.base_url}/api/health", headers={"X-Aegis-Token": get_token()}
         )
         with urllib.request.urlopen(request, timeout=5) as response:
             assert response.status == 200
@@ -132,7 +132,7 @@ def test_server_thread_serves_the_app_and_stops_cleanly():
 
 
 def test_server_runs_in_a_background_thread():
-    from jarvis.desktop import find_free_port, start_server, stop_server
+    from aegis.desktop import find_free_port, start_server, stop_server
 
     handle = start_server(find_free_port(0))
     try:
@@ -143,7 +143,7 @@ def test_server_runs_in_a_background_thread():
 
 
 def test_stop_server_is_idempotent():
-    from jarvis.desktop import stop_server
+    from aegis.desktop import stop_server
 
     stop_server(None)  # must not raise
 
@@ -173,7 +173,7 @@ class FakeWindow:
 
 
 def test_bridge_reports_desktop_and_version():
-    from jarvis.desktop import DesktopAPI
+    from aegis.desktop import DesktopAPI
 
     info = DesktopAPI().info()
     assert info["desktop"] is True
@@ -181,7 +181,7 @@ def test_bridge_reports_desktop_and_version():
 
 
 def test_bridge_drives_the_page_not_the_other_way_round():
-    from jarvis.desktop import DesktopAPI
+    from aegis.desktop import DesktopAPI
 
     api = DesktopAPI()
     window = FakeWindow()
@@ -196,7 +196,7 @@ def test_bridge_drives_the_page_not_the_other_way_round():
 
 
 def test_bridge_is_a_no_op_before_the_window_exists():
-    from jarvis.desktop import DesktopAPI
+    from aegis.desktop import DesktopAPI
 
     api = DesktopAPI()
     api.open_settings()      # must not raise
@@ -204,7 +204,7 @@ def test_bridge_is_a_no_op_before_the_window_exists():
 
 
 def test_bridge_survives_a_failing_page():
-    from jarvis.desktop import DesktopAPI
+    from aegis.desktop import DesktopAPI
 
     class Broken(FakeWindow):
         def evaluate_js(self, script):
@@ -268,7 +268,7 @@ def fake_webview(monkeypatch):
 
 
 def test_desktop_opens_a_window_on_a_loopback_token_url(fake_webview):
-    from jarvis.desktop import run_desktop
+    from aegis.desktop import run_desktop
 
     assert run_desktop(port=0) == 0
 
@@ -282,18 +282,18 @@ def test_desktop_opens_a_window_on_a_loopback_token_url(fake_webview):
 
 
 def test_desktop_window_is_configured_as_an_app(fake_webview):
-    from jarvis.desktop import MIN_SIZE, run_desktop
+    from aegis.desktop import MIN_SIZE, run_desktop
 
     run_desktop(port=0)
     kwargs = fake_webview["window_kwargs"]
     assert kwargs["min_size"] == MIN_SIZE
     assert kwargs["confirm_close"] is True
     assert kwargs["js_api"] is not None
-    assert kwargs["title"].startswith("Claw")
+    assert kwargs["title"].startswith("Aegis")
 
 
 def test_missing_pywebview_explains_the_two_options(monkeypatch, capsys):
-    from jarvis.desktop import run_desktop
+    from aegis.desktop import run_desktop
 
     monkeypatch.setitem(sys.modules, "webview", None)
     assert run_desktop(port=0) == 1
@@ -304,21 +304,21 @@ def test_missing_pywebview_explains_the_two_options(monkeypatch, capsys):
 
 def test_self_check_writes_a_report_for_console_less_builds(capsys):
     """A `console=False` bundle has nowhere to print, so the result lands on disk."""
-    from jarvis.config import DATA_DIR
-    from jarvis.desktop import self_check
+    from aegis.config import DATA_DIR
+    from aegis.desktop import self_check
 
     assert self_check() == 0
     capsys.readouterr()
 
     report = (DATA_DIR / "self-check.txt").read_text(encoding="utf-8")
-    assert "Claw" in report
+    assert "Aegis" in report
     assert "frozen:" in report
     assert "All checks passed" in report
 
 
 def test_ensure_streams_survives_a_windowed_build(monkeypatch):
     """PyInstaller's windowed build sets sys.stdout/stderr to None; printing must not crash."""
-    import jarvis.desktop as desktop
+    import aegis.desktop as desktop
 
     monkeypatch.setattr(sys, "stdout", None)
     monkeypatch.setattr(sys, "stderr", None)
@@ -328,7 +328,7 @@ def test_ensure_streams_survives_a_windowed_build(monkeypatch):
 
 
 def test_self_check_entry_point_runs(capsys):
-    from jarvis.desktop import self_check
+    from aegis.desktop import self_check
 
     assert self_check() == 0
     out = capsys.readouterr().out
@@ -361,7 +361,7 @@ class _RecordingWebview(types.ModuleType):
 
 def test_fatal_server_error_leaves_a_log_and_does_not_hang(monkeypatch, tmp_path):
     """A server that cannot start must explain itself, with or without a display."""
-    import jarvis.desktop as desktop
+    import aegis.desktop as desktop
 
     shown = []
 
@@ -380,14 +380,14 @@ def test_fatal_server_error_leaves_a_log_and_does_not_hang(monkeypatch, tmp_path
 
     monkeypatch.setitem(sys.modules, "webview", _QuietWebview())
     monkeypatch.setattr(desktop, "start_server", _raise(RuntimeError("boom")))
-    monkeypatch.setattr("jarvis.config.DATA_DIR", tmp_path)
+    monkeypatch.setattr("aegis.config.DATA_DIR", tmp_path)
 
     assert desktop.run_desktop(port=0) == 1
 
-    assert "RuntimeError: boom" in (tmp_path / "claw-crash.log").read_text(encoding="utf-8")
+    assert "RuntimeError: boom" in (tmp_path / "aegis-crash.log").read_text(encoding="utf-8")
     # A display may or may not be available; if a window was opened it must be
     # the explanation, never the app.
-    assert [w["args"][0] for w in shown] in ([], ["Claw could not start"])
+    assert [w["args"][0] for w in shown] in ([], ["Aegis could not start"])
 
 
 def test_webview_failure_is_reported_without_blocking(monkeypatch, tmp_path):
@@ -397,25 +397,25 @@ def test_webview_failure_is_reported_without_blocking(monkeypatch, tmp_path):
     click, and can sit behind the project window on a desktop. Regression test:
     this is exactly what hung the Windows build.
     """
-    import jarvis.desktop as desktop
+    import aegis.desktop as desktop
 
     fake = _RecordingWebview(start_error=RuntimeError("no display"))
     monkeypatch.setitem(sys.modules, "webview", fake)
     monkeypatch.setitem(sys.modules, "tkinter", None)
     monkeypatch.setitem(sys.modules, "tkinter.messagebox", None)
-    monkeypatch.setattr("jarvis.config.DATA_DIR", tmp_path)
+    monkeypatch.setattr("aegis.config.DATA_DIR", tmp_path)
 
     assert desktop.run_desktop(port=0) == 1
 
-    assert fake.windows[0]["title"].startswith("Claw —")
-    assert "no display" in (tmp_path / "claw-crash.log").read_text(encoding="utf-8")
+    assert fake.windows[0]["title"].startswith("Aegis —")
+    assert "no display" in (tmp_path / "aegis-crash.log").read_text(encoding="utf-8")
     # The crash window is best-effort (it needs a display); the log is not.
-    assert [w["args"][0] for w in fake.windows[1:]] in ([], ["Claw could not start"])
+    assert [w["args"][0] for w in fake.windows[1:]] in ([], ["Aegis could not start"])
 
 
 def test_a_failing_error_window_still_leaves_a_log(monkeypatch, tmp_path):
     """If even the error window cannot open (headless), the log is the record."""
-    import jarvis.desktop as desktop
+    import aegis.desktop as desktop
 
     class _BrokenWebview(types.ModuleType):
         def __init__(self):
@@ -428,17 +428,17 @@ def test_a_failing_error_window_still_leaves_a_log(monkeypatch, tmp_path):
             raise AssertionError("should not start")
 
     monkeypatch.setitem(sys.modules, "webview", _BrokenWebview())
-    monkeypatch.setattr("jarvis.config.DATA_DIR", tmp_path)
+    monkeypatch.setattr("aegis.config.DATA_DIR", tmp_path)
 
     assert desktop.run_desktop(port=0) == 1
-    assert "no backend" in (tmp_path / "claw-crash.log").read_text(encoding="utf-8")
+    assert "no backend" in (tmp_path / "aegis-crash.log").read_text(encoding="utf-8")
 
 
 def test_error_window_cannot_block_forever(monkeypatch):
     """`webview.start()` may hang instead of raising; the crash path must not."""
     import time
 
-    import jarvis.desktop as desktop
+    import aegis.desktop as desktop
 
     class _HangingWebview(types.ModuleType):
         def start(self, **kwargs):
@@ -452,22 +452,22 @@ def test_error_window_cannot_block_forever(monkeypatch):
 
 def test_headless_env_skips_the_error_window(monkeypatch, tmp_path):
     """CI has nobody to close a window, so the log is the only useful output."""
-    import jarvis.desktop as desktop
+    import aegis.desktop as desktop
 
     fake = _RecordingWebview(start_error=RuntimeError("headless"))
     monkeypatch.setitem(sys.modules, "webview", fake)
-    monkeypatch.setenv("JARVIS_NO_GUI_ERRORS", "1")
-    monkeypatch.setattr("jarvis.config.DATA_DIR", tmp_path)
+    monkeypatch.setenv("AEGIS_NO_GUI_ERRORS", "1")
+    monkeypatch.setattr("aegis.config.DATA_DIR", tmp_path)
 
     assert desktop.run_desktop(port=0) == 1
     assert len(fake.windows) == 1                   # only the app window: no dialog...
     assert "headless" in "".join(
-        (tmp_path / "claw-crash.log").read_text(encoding="utf-8")  # ...but the reason was kept
+        (tmp_path / "aegis-crash.log").read_text(encoding="utf-8")  # ...but the reason was kept
     )
 
 
 def test_error_page_escapes_the_message():
-    from jarvis.desktop import _error_page
+    from aegis.desktop import _error_page
 
     html = _error_page(error="<script>alert(1)</script>", log="/tmp/<x>.log")
     assert "<script>" not in html
@@ -491,7 +491,7 @@ def test_cli_defaults_to_desktop(monkeypatch):
 
     calls = {}
     monkeypatch.setattr(
-        "jarvis.desktop.run_desktop",
+        "aegis.desktop.run_desktop",
         lambda **kwargs: calls.update(kwargs) or 0,
     )
     assert runner.main([]) == 0
@@ -523,5 +523,5 @@ def test_cli_host_flag_is_honoured(monkeypatch):
 def test_self_check_flag_short_circuits(monkeypatch):
     import run as runner
 
-    monkeypatch.setattr("jarvis.desktop.self_check", lambda: 0)
+    monkeypatch.setattr("aegis.desktop.self_check", lambda: 0)
     assert runner.main(["--self-check"]) == 0
