@@ -1,0 +1,74 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "claw-jarvis"
+version = "1.0.0"
+description = "A local AI assistant that can see your screen and control your PC"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = [
+    "fastapi>=0.110,<1.0",
+    "uvicorn>=0.29,<1.0",
+    "httpx>=0.27,<1.0",
+    "pillow>=10.0,<12.0",
+    "mss>=9.0,<11.0",
+    "psutil>=5.9,<8.0",
+    "pyautogui>=0.9.54,<1.0",
+    "pyperclip>=1.8,<2.0",
+    # Desktop shell: uses the OS webview, no bundled browser engine.
+    # Linux also needs the system WebKitGTK + PyGObject packages (see README).
+    "pywebview>=5.0,<7.0",
+    "pywin32>=306; sys_platform == 'win32'",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "httpx>=0.27",
+    "ruff>=0.6",
+]
+
+[project.scripts]
+claw = "jarvis.__main__:main"
+claw-web = "run:main"
+
+[project.urls]
+Homepage = "https://github.com/samuelmelkie2020-hue/claw"
+
+[tool.setuptools]
+packages = ["jarvis"]
+
+[tool.setuptools.package-data]
+jarvis = ["static/*"]
+
+# ---------------------------------------------------------------------------
+# Tooling. Committed so `ruff check` and `pytest` agree for every contributor;
+# the source already carried `# noqa` codes that only make sense with this file.
+# ---------------------------------------------------------------------------
+
+[tool.ruff]
+line-length = 110
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "C4", "SIM"]
+ignore = [
+    "E501",   # long lines are fine for prompts and messages
+    "SIM105", # contextlib.suppress is not always clearer
+]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 12
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S101"]  # asserts are the point
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+filterwarnings = [
+    "ignore::DeprecationWarning",
+    "ignore::UserWarning",
+]

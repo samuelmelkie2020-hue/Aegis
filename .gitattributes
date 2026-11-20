@@ -1,0 +1,13 @@
+# Batch files with LF endings break inside parenthesised blocks on Windows.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Shell scripts must stay LF and executable.
+*.sh text eol=lf
+
+# Keep diffs readable
+*.py text
+*.js text
+*.css text
+*.html text
+*.md text

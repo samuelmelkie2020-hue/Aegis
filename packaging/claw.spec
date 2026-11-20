@@ -1,0 +1,98 @@
+# -*- mode: python ; coding: utf-8 -*-
+"""PyInstaller spec: builds the Claw desktop app for the current platform.
+
+    pyinstaller --noconfirm packaging/claw.spec
+
+Produces dist/Claw (Linux/macOS) or dist/Claw.exe (Windows). Everything the
+app reads at runtime from the bundle — the web UI — is collected explicitly;
+the user's settings live outside the bundle (see jarvis.config.user_data_dir).
+"""
+
+import os
+import sys
+from pathlib import Path
+
+ROOT = Path(SPECPATH).resolve().parent  # noqa: F821 - SPECPATH is packaging/
+sys.path.insert(0, str(ROOT))
+
+# A program icon is optional; the build must not fail without one.
+icon_path = ROOT / "packaging" / "assets" / "claw.ico"
+icon = str(icon_path) if icon_path.exists() else None
+
+datas = [
+    (str(ROOT / "jarvis" / "static"), "jarvis/static"),
+]
+# psutil ships a small binary shim; pywebview/uvicorn need their submodules named
+# explicitly because they are imported lazily at runtime.
+hiddenimports = [
+    "uvicorn",
+    "uvicorn.logging",
+    "uvicorn.loops.auto",
+    "uvicorn.loops.asyncio",
+    "uvicorn.protocols.http.auto",
+    "uvicorn.protocols.http.h11_impl",
+    "uvicorn.protocols.websockets.auto",
+    "uvicorn.lifespan.off",
+    "webview",
+    "webview.platforms",
+    "jarvis.desktop",
+]
+if sys.platform.startswith("win"):
+    hiddenimports += ["webview.platforms.edgechromium", "webview.platforms.winforms"]
+elif sys.platform == "darwin":
+    hiddenimports += ["webview.platforms.cocoa"]
+else:
+    hiddenimports += ["webview.platforms.gtk", "webview.platforms.qt"]
+
+excludes = [
+    "tkinter",          # pywebview may probe Tk; we never use it
+    "matplotlib", "numpy", "pandas", "scipy", "IPython", "pytest", "ruff",
+]
+
+analysis = Analysis(  # noqa: F821
+    [str(ROOT / "run.py")],
+    pathex=[str(ROOT)],
+    binaries=[],
+    datas=datas,
+    hiddenimports=hiddenimports,
+    hookspath=[],
+    runtime_hooks=[],
+    excludes=excludes,
+    noarchive=False,
+)
+
+pyz = PYZ(analysis.pure)  # noqa: F821
+
+executable = EXE(  # noqa: F821
+    pyz,
+    analysis.scripts,
+    analysis.binaries,
+    analysis.datas,
+    name="Claw",
+    debug=False,
+    bootloader_ignore_signals=False,
+    strip=False,
+    upx=False,
+    console=False,          # no terminal window: this is a GUI app
+    icon=icon,
+)
+
+if sys.platform == "darwin":
+    app = BUNDLE(  # noqa: F821
+        executable,
+        name="Claw.app",
+        icon=icon,
+        bundle_identifier="com.claw.jarvis",
+        info_plist={
+            "CFBundleName": "Claw",
+            "CFBundleDisplayName": "Claw",
+            "CFBundleShortVersionString": "1.0.0",
+            "NSHighResolutionCapable": True,
+            # The assistant reads the screen and types: both need consent.
+            "NSAppleEventsUsageDescription":
+                "Claw needs this to open apps and control your Mac for you.",
+            "NSScreenCaptureUsageDescription":
+                "Claw takes a screenshot only when you ask what is on your screen.",
+            "LSUIElement": False,
+        },
+    )

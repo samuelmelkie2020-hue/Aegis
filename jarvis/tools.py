@@ -11,7 +11,6 @@ import base64
 import io
 import os
 import platform
-import re
 import shutil
 import subprocess
 import sys
@@ -19,8 +18,19 @@ import time
 from pathlib import Path
 from typing import Any
 
+from .safety import check_readable, check_writable, redact, redact_result
+
+MAX_IMAGE_WIDTH = 1280   # screenshots are downscaled to this for the model
 MAX_OUTPUT = 4000        # max characters of tool output fed back to the model
-MAX_FILE_READ = 8000     # max characters of a file read
+MAX_FILE_READ = 8000     # max characters of a file read (also the read cap)
+MAX_WALK_DIRS = 2000     # folders inspected by a single search_files call
+MAX_SEARCH_ENTRIES = 60000  # files inspected by a single search_files call
+MAX_SEARCH_HITS = 30     # matches returned by search_files
+
+# The scale factor of the most recent screenshot, so `click` can map the
+# coordinates the model read off the (downscaled) image back to real pixels.
+_last_scale: tuple[float, int, int] = (1.0, 0, 0)
+
 
 # Tools that modify the system or control the keyboard/mouse.
 DANGEROUS_TOOLS = {
@@ -276,21 +286,44 @@ def see_screen() -> dict[str, Any]:
             monitor = sct.monitors[1] if len(sct.monitors) > 1 else sct.monitors[0]
             shot = sct.grab(monitor)
             img = Image.frombytes("RGB", shot.size, shot.rgb)
-        if img.width > 1280:
-            img = img.resize((1280, int(img.height * 1280 / img.width)))
+        full_w, full_h = img.width, img.height
+        scale = 1.0
+        if img.width > MAX_IMAGE_WIDTH:
+            scale = MAX_IMAGE_WIDTH / img.width
+            img = img.resize((MAX_IMAGE_WIDTH, max(1, int(img.height * scale))))
         buf = io.BytesIO()
         img.save(buf, "PNG")
         data = base64.b64encode(buf.getvalue()).decode()
+        global _last_scale
+        _last_scale = (scale, full_w, full_h)
+        how = (
+            f"shown at {img.width}x{img.height}, scaled {1 / scale:.2f}x from your "
+            f"{full_w}x{full_h} display"
+            if scale != 1.0
+            else f"shown 1:1 at {full_w}x{full_h}"
+        )
         return {
             "ok": True,
-            "result": "Screenshot captured and attached below. Describe or use it as needed.",
+            "result": (
+                f"Screenshot captured and attached below ({how}). "
+                "Click coordinates are converted back to screen pixels automatically, "
+                "so use the pixel positions you see in this image."
+            ),
             "image": data,
+            "image_width": img.width,
+            "image_height": img.height,
+            "screen_width": full_w,
+            "screen_height": full_h,
         }
     except Exception as exc:  # no display, permissions, etc.
         return {
             "ok": True,
             "result": f"Screen capture unavailable here ({exc}). If you are running this on your PC, make sure a display is attached and the app has screen-recording permission.",
             "image": _placeholder_image(f"Screen capture unavailable: {exc}"),
+            "image_width": 960,
+            "image_height": 540,
+            "screen_width": 960,
+            "screen_height": 540,
         }
 
 
@@ -326,7 +359,7 @@ def open_app(app: str) -> dict[str, Any]:
                 f'start "" "{app}"', shell=True
             )
         elif sys.platform == "darwin":
-            target = app if Path(app).exists() else f"-a"
+            target = app if Path(app).exists() else "-a"
             subprocess.Popen(["open", target, app] if target == "-a" else ["open", app])
         else:
             exe = shutil.which(app)
@@ -361,10 +394,20 @@ def type_text(text: str) -> dict[str, Any]:
         return _fail(f"could not type: {exc}")
 
 
-def press_keys(keys: list[str]) -> dict[str, Any]:
+def press_keys(keys: list[str] | str) -> dict[str, Any]:
+    """Press one key, or a combination.
+
+    Models routinely send ``"enter"`` where the schema says ``["enter"]``; a
+    bare string used to be iterated into five single-key presses, which is why
+    this normalises first.
+    """
     try:
+        if isinstance(keys, str):
+            keys = [keys]
+        keys = [str(k).strip() for k in (keys or []) if str(k).strip()]
+        if not keys:
+            return _fail("no keys given (expected something like [\"ctrl\", \"s\"])")
         pg = _pyautogui()
-        keys = [str(k) for k in keys]
         if len(keys) == 1:
             pg.press(keys[0])
         else:
@@ -375,12 +418,37 @@ def press_keys(keys: list[str]) -> dict[str, Any]:
 
 
 def click(x: int, y: int, button: str = "left") -> dict[str, Any]:
+    """Click at coordinates read off the most recent screenshot.
+
+    ``see_screen`` may downscale the image before the model sees it, so the
+    numbers the model produces are image pixels, not screen pixels. Mapping them
+    back here is what makes "click the blue button" land on the button.
+    """
+    try:
+        x, y = int(x), int(y)
+    except (TypeError, ValueError):
+        return _fail(f"coordinates must be numbers, got x={x!r} y={y!r}")
+    if x < 0 or y < 0:
+        return _fail(f"coordinates must not be negative, got ({x}, {y})")
+
+    scale, screen_w, screen_h = _last_scale
+    if scale and scale != 1.0:
+        mapped_x, mapped_y = int(round(x / scale)), int(round(y / scale))
+    else:
+        mapped_x, mapped_y = x, y
+    if screen_w and screen_h and not (0 <= mapped_x < screen_w and 0 <= mapped_y < screen_h):
+        return _fail(
+            f"({x}, {y}) maps to ({mapped_x}, {mapped_y}), which is outside your "
+            f"{screen_w}x{screen_h} screen. Take a fresh screenshot and pick a "
+            "point inside it."
+        )
     try:
         pg = _pyautogui()
-        pg.click(int(x), int(y), button=button or "left")
-        return {"ok": True, "result": f"Clicked at ({x}, {y}) with {button} button."}
+        pg.click(mapped_x, mapped_y, button=button or "left")
     except Exception as exc:
         return _fail(str(exc))
+    note = f" (from image point {x}, {y})" if (mapped_x, mapped_y) != (x, y) else ""
+    return {"ok": True, "result": f"Clicked at ({mapped_x}, {mapped_y}){note} with {button} button."}
 
 
 def system_info() -> dict[str, Any]:
@@ -417,7 +485,9 @@ def system_info() -> dict[str, Any]:
 
 
 def list_files(path: str | None = None) -> dict[str, Any]:
-    target = Path(path).expanduser() if path else Path.home()
+    target, denied = check_readable(path) if path else (Path.home().resolve(), None)
+    if denied:
+        return _fail(denied)
     if not target.exists() or not target.is_dir():
         return _fail(f"'{target}' is not a folder")
     rows = []
@@ -441,20 +511,27 @@ def list_files(path: str | None = None) -> dict[str, Any]:
 
 
 def read_file(path: str) -> dict[str, Any]:
-    p = Path(path).expanduser()
+    p, denied = check_readable(path)
+    if denied:
+        return _fail(denied)
     if not p.exists():
         return _fail(f"'{path}' does not exist")
     if not p.is_file():
         return _fail(f"'{path}' is not a file")
     try:
-        text = p.read_text(encoding="utf-8", errors="replace")
+        # Never materialise a whole (possibly huge or binary) file: read one
+        # character past the cap so we can still say that it was truncated.
+        with p.open("r", encoding="utf-8", errors="replace") as handle:
+            text = handle.read(MAX_FILE_READ + 1)
     except Exception as exc:
         return _fail(str(exc))
     return {"ok": True, "result": _truncate(text, MAX_FILE_READ)}
 
 
 def write_file(path: str, content: str) -> dict[str, Any]:
-    p = Path(path).expanduser()
+    p, denied = check_writable(path)
+    if denied:
+        return _fail(denied)
     try:
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(content or "", encoding="utf-8")
@@ -464,21 +541,45 @@ def write_file(path: str, content: str) -> dict[str, Any]:
 
 
 def search_files(query: str, path: str | None = None) -> dict[str, Any]:
-    root = Path(path).expanduser() if path else Path.home()
+    needle = (query or "").strip().lower()
+    if not needle:
+        return _fail("give me something to search for")
+    root, denied = check_readable(path) if path else (Path.home().resolve(), None)
+    if denied:
+        return _fail(denied)
     if not root.exists():
         return _fail(f"'{root}' does not exist")
-    needle = (query or "").lower()
+
+    skip = {"node_modules", "__pycache__", "venv", ".venv", "site-packages", "Library"}
     hits: list[str] = []
+    folders = 0
+    entries = 0
+    stopped = None
     for dirpath, dirnames, filenames in os.walk(root):
-        # skip heavy/hidden folders
-        dirnames[:] = [d for d in dirnames if not d.startswith(".") and d.lower() not in {"node_modules", "__pycache__", "venv", ".venv"}]
+        dirnames[:] = [d for d in dirnames if not d.startswith(".") and d.lower() not in skip]
         for fn in filenames:
+            entries += 1
+            if entries > MAX_SEARCH_ENTRIES:
+                stopped = f"after {MAX_SEARCH_ENTRIES} files"
+                break
             if needle in fn.lower():
-                hits.append(str(Path(dirpath) / fn))
-                if len(hits) >= 30:
+                candidate = Path(dirpath) / fn
+                if check_readable(candidate)[1]:
+                    continue  # never surface the path of a credential file
+                hits.append(str(candidate))
+                if len(hits) >= MAX_SEARCH_HITS:
+                    stopped = f"after {MAX_SEARCH_HITS} matches"
                     break
-        if len(hits) >= 30:
+        if stopped:
             break
+        folders += 1
+        if folders > MAX_WALK_DIRS:
+            # Bounded work per call: a search of a huge tree must not pin the
+            # request for minutes. The model is told to narrow the path.
+            stopped = f"after {MAX_WALK_DIRS} folders"
+            break
+    if stopped:
+        hits.append(f"… stopped {stopped} — narrow the search path to go deeper")
     return {"ok": True, "result": _truncate("\n".join(hits) or f"No files matching '{query}' under {root}")}
 
 
@@ -487,7 +588,7 @@ def clipboard(action: str, text: str | None = None) -> dict[str, Any]:
         import pyperclip
 
         if action == "get":
-            return {"ok": True, "result": _truncate(f"Clipboard: {pyperclip.paste()!r}")}
+            return {"ok": True, "result": _truncate(redact(f"Clipboard: {pyperclip.paste()!r}"))}
         pyperclip.copy(text or "")
         return {"ok": True, "result": "Clipboard updated."}
     except Exception as exc:
@@ -499,32 +600,43 @@ def clipboard(action: str, text: str | None = None) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 def execute_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
+    """Run a tool by name and return ``{ok, result, [image, …]}``.
+
+    Every result passes through :func:`jarvis.safety.redact_result` on the way
+    out, so credential-shaped text can never reach the model (or the browser)
+    just because a command happened to print it.
+    """
     args = args or {}
     try:
-        if name == "see_screen":
-            return see_screen()
-        if name == "run_command":
-            return run_command(args.get("command", ""), args.get("cwd"))
-        if name == "open_app":
-            return open_app(args.get("app", ""))
-        if name == "type_text":
-            return type_text(args.get("text", ""))
-        if name == "press_keys":
-            return press_keys(args.get("keys", []))
-        if name == "click":
-            return click(args.get("x", 0), args.get("y", 0), args.get("button", "left"))
-        if name == "system_info":
-            return system_info()
-        if name == "list_files":
-            return list_files(args.get("path"))
-        if name == "read_file":
-            return read_file(args.get("path", ""))
-        if name == "write_file":
-            return write_file(args.get("path", ""), args.get("content", ""))
-        if name == "search_files":
-            return search_files(args.get("query", ""), args.get("path"))
-        if name == "clipboard":
-            return clipboard(args.get("action", "get"), args.get("text"))
-        return _fail(f"unknown tool '{name}'")
+        result = _dispatch(name, args)
     except Exception as exc:  # never let a tool crash the agent
         return _fail(f"{type(exc).__name__}: {exc}")
+    return redact_result(result)
+
+
+def _dispatch(name: str, args: dict[str, Any]) -> dict[str, Any]:
+    if name == "see_screen":
+        return see_screen()
+    if name == "run_command":
+        return run_command(args.get("command", ""), args.get("cwd"))
+    if name == "open_app":
+        return open_app(args.get("app", ""))
+    if name == "type_text":
+        return type_text(args.get("text", ""))
+    if name == "press_keys":
+        return press_keys(args.get("keys", []))
+    if name == "click":
+        return click(args.get("x", 0), args.get("y", 0), args.get("button", "left"))
+    if name == "system_info":
+        return system_info()
+    if name == "list_files":
+        return list_files(args.get("path"))
+    if name == "read_file":
+        return read_file(args.get("path", ""))
+    if name == "write_file":
+        return write_file(args.get("path", ""), args.get("content", ""))
+    if name == "search_files":
+        return search_files(args.get("query", ""), args.get("path"))
+    if name == "clipboard":
+        return clipboard(args.get("action", "get"), args.get("text"))
+    return _fail(f"unknown tool '{name}'")
