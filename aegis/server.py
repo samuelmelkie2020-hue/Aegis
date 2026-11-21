@@ -50,7 +50,7 @@ from .security import (
     require_session,
     token_matches,
 )
-from .tools import execute_tool, see_screen
+from .tools import execute_tool, live_frame, see_screen
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
@@ -339,6 +339,37 @@ def get_screenshot() -> Response:
     result = see_screen()
     data = base64.b64decode(result.get("image", ""))
     return Response(content=data, media_type="image/png")
+
+
+@app.get("/api/live/frame", dependencies=API)
+def get_live_frame(fps: float = Query(default=2.0, ge=0.1, le=30)) -> Response:
+    """One frame of the live screen view, as JPEG.
+
+    Token-gated like every other ``/api`` route. Returning an image instead of
+    JSON keeps the hot path cheap — the client assigns the response straight to
+    an ``<img>``, with no base64 decode and no per-frame object URL to leak.
+
+    ``no-store`` on the frame itself: a screen recording is the last thing that
+    should survive in a browser cache after the tab closes.
+    """
+    frame = live_frame(fps)
+    if not frame.get("ok"):
+        return JSONResponse(
+            {"ok": False, "reason": frame.get("reason"), "detail": frame.get("detail")},
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            headers={"Cache-Control": "no-store"},
+        )
+    data = base64.b64decode(frame["image"])
+    return Response(
+        content=data,
+        media_type="image/jpeg",
+        headers={
+            "Cache-Control": "no-store, max-age=0",
+            "X-Aegis-Capture": "reused" if frame.get("reused") else "fresh",
+            "X-Aegis-Fps": str(frame.get("fps", "")),
+            "X-Aegis-Tick": str(frame.get("tick", "")),
+        },
+    )
 
 
 @app.post("/api/approve", dependencies=API)

@@ -13,6 +13,7 @@ Ask it in plain English (or by voice) and it will look at your screen, run comma
 | | |
 |---|---|
 | 👀 **Sees your PC** | Captures your screen and analyzes it with a vision model |
+| 🔴 **Live view** | Watch your own screen in the app at 2 fps — or let it watch while you talk to it |
 | 💻 **Controls your PC** | Runs shell commands, opens apps, types, presses shortcuts, clicks |
 | 📂 **File assistant** | Lists, reads, writes and searches files |
 | 🖥 **System monitor** | CPU, memory, disk, battery, uptime, top processes |
@@ -109,6 +110,13 @@ Paste your API key and **Save**. Use a **vision-capable model** so Aegis can see
 
 Things you can say:
 
+**Watching your screen live.** The ⏺ button on the screen panel streams your display
+into the app at 2 frames a second, so you can narrate what you are doing while Aegis
+follows along. It is off until you press it, and it stops itself when the tab goes to
+the background, after four failed frames, or after 30 minutes — a live view nobody is
+looking at is just a screen recorder. Frames are JPEG, sent to your browser only, and
+marked `no-store` so nothing is left in the cache.
+
 ```
 What's on my screen?
 Click the blue button in the middle of the screen
@@ -129,6 +137,7 @@ How is my PC doing?
 - **Localhost only by default.** The server binds to `127.0.0.1`, so it is not reachable from your network.
 - **Every `/api` call needs an access token.** Aegis runs commands and reads files, so the API is not open. A random token is generated on first run and stored in `.aegis_token` (next to your config, `chmod 600`). The desktop window loads `http://127.0.0.1:<port>/?token=…` once and the page trades it for an HttpOnly session cookie; in `--web` mode the terminal prints that URL for you to open.
 - **Your API key never leaves the server.** The Settings dialog shows only whether a key is saved, plus a masked hint (`sk-…1234`). Leaving the key field blank keeps the saved key; tick **Forget the saved key** to delete it.
+- **Live view is opt-in and limits itself.** Off by default, token-gated, capped at 4 fps **by the server** rather than the page, stopped when the tab goes to the background, and ended after 30 minutes. The panel shows a red **Live** badge that turns amber **Stalled** if frames stop arriving — the badge never claims to be watching a screen it is not reading.
 - Requests whose `Host` header is not this machine are rejected, which blocks DNS-rebinding attacks from a web page you happen to visit.
 
 ### What Aegis will not do
@@ -190,7 +199,7 @@ Environment variables:
 
 ```bash
 pip install -r requirements-dev.txt   # runtime deps + pytest + ruff
-python -m pytest -q                   # 240 tests, ~3s, no display or API key needed
+python -m pytest -q                   # 259 tests, ~3s, no display or API key needed
 ruff check .                          # lint (config lives in pyproject.toml)
 python run.py --self-check            # diagnose a machine: data dir, server, webview
 node --check aegis/static/app.js      # front-end syntax
@@ -266,6 +275,15 @@ not frozen is the most common packaging failure.
 3. The LLM decides what to do — e.g. `see_screen` → look at the screenshot → `click(512, 340)` → `type_text("hello")`.
 4. Results (including screenshots) stream back to the chat in real time.
 5. If an action needs approval, the server registers it, shows a card, and — once you click — runs that stored action itself, exactly once, then resumes the conversation with the result.
+
+### Live frames (alternate clients)
+
+`GET /api/live/frame?fps=2` returns `image/jpeg` — one frame of the display, token-gated
+like everything else. `Cache-Control: no-store` always; `X-Aegis-Tick` increments per
+*new* frame (a repeated value means the frame was re-sent because you asked faster than
+the limit); `X-Aegis-Capture: fresh|reused`. The server clamps `fps` to 4, stops a run
+after 30 minutes, and treats a gap of 2 minutes as a new run. `503` carries a JSON
+`{reason, detail}` when there is no display or the run ended.
 
 ### Streaming protocol (for alternate clients)
 

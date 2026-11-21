@@ -103,11 +103,15 @@
             <span class="shot-time" id="shotTime"></span>
             <button id="refreshScreen" class="tiny-btn" title="Refresh screenshot"
                     aria-label="Refresh screenshot">⟳</button>
+            <button id="liveToggle" class="tiny-btn live-btn" aria-pressed="false"
+                    title="Watch my screen continuously (2 frames a second)"
+                    aria-label="Watch my screen continuously">⏺</button>
           </div>
         </div>
         <div class="screen-frame" id="screenFrame">
-          <img id="screenImg" alt="Latest screenshot of your screen" />
+          <img id="screenImg" alt="Your screen, captured just now by Aegis" />
           <div class="screen-off" id="screenOff"><div class="spin-ring"></div>Waiting for capture…</div>
+          <div class="live-badge" id="liveBadge" hidden role="status"><span class="live-dot"></span><span id="liveBadgeText">Live</span></div>
         </div>
       </section>
 

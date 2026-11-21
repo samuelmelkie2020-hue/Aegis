@@ -13,6 +13,9 @@ const screenImg = document.getElementById("screenImg");
 const screenOff = document.getElementById("screenOff");
 const refreshScreen = document.getElementById("refreshScreen");
 const shotTime = document.getElementById("shotTime");
+const liveToggle = document.getElementById("liveToggle");
+const liveBadge = document.getElementById("liveBadge");
+const liveBadgeText = document.getElementById("liveBadgeText");
 const safeModeEl = document.getElementById("safeMode");
 const voiceRepliesEl = document.getElementById("voiceReplies");
 const assistantNameEl = document.getElementById("assistantName");
@@ -41,6 +44,12 @@ const heroTemplate = (document.getElementById("welcomeHero") || {}).outerHTML ||
 const state = {
   history: [],            // [{role, content}] — text-only conversation history
   busy: false,
+  live: false,            // live screen view on?
+  liveTimer: null,
+  liveLoop: null,         // the in-flight poll chain
+  liveFails: 0,
+  liveTick: 0,
+  liveStalls: 0,
   orb: "idle",            // idle | listening | thinking | speaking
   settings: {
     assistant_name: "Aegis",
@@ -280,6 +289,7 @@ function addApprovalCard(data) {
 
 function markShot() {
   shotTime.textContent = nowTime();
+  if (state.live) return;            // a flash at 2 Hz is a strobe, not a signal
   const frame = document.getElementById("screenFrame");
   frame.classList.remove("flash");
   void frame.offsetWidth;            // restart the animation
@@ -529,15 +539,30 @@ document.getElementById("clearChat").addEventListener("click", () => {
 // ---------------------------------------------------------------------------
 // Screen panel
 // ---------------------------------------------------------------------------
+// One place assigns the frame so the previous object URL is always revoked;
+// leaking them would hold several megabytes of screenshots per minute live.
+function showFrame(blob) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(blob);
+    screenImg.onload = () => {
+      if (screenImg.dataset.blobUrl) URL.revokeObjectURL(screenImg.dataset.blobUrl);
+      screenImg.dataset.blobUrl = url;
+      resolve();
+    };
+    screenImg.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error("the frame could not be decoded"));
+    };
+    screenImg.src = url;
+  });
+}
+
 async function refreshScreenImage() {
   try {
     const res = await api(`/api/screenshot?t=${Date.now()}`);
     if (!res.ok) throw new Error(`Server error ${res.status}`);
-    const blob = await res.blob();
-    if (screenImg.dataset.blobUrl) URL.revokeObjectURL(screenImg.dataset.blobUrl);
-    const url = URL.createObjectURL(blob);
-    screenImg.dataset.blobUrl = url;
-    screenImg.src = url;
+    await showFrame(await res.blob());
+    screenOff.style.display = "none";
   } catch (err) {
     screenOff.style.display = "";
     screenOff.textContent = `Screen unavailable — ${err.message || err}`;
@@ -548,6 +573,120 @@ screenImg.addEventListener("load", () => {
   markShot();
 });
 refreshScreen.addEventListener("click", refreshScreenImage);
+
+// ---------------------------------------------------------------------------
+// Live view
+//
+// One loop, never two: a frame is the current screen, so overlapping requests
+// would queue frames that are already out of date — and each one is a full
+// screenshot. The loop schedules the next poll only after the previous frame has
+// rendered, which makes the browser the rate limiter even before the server
+// clamps it.
+//
+// It also stops itself: on a hidden tab (nothing is being watched, so nothing
+// should be captured), after a run of failures, and when the server says its
+// time limit was reached. Off is the default and stays the default.
+// ---------------------------------------------------------------------------
+const LIVE_INTERVAL_MS = 500;      // 2 fps, matching the server's clamp
+const LIVE_MAX_FAILURES = 4;       // a vanishing display must not spin forever
+const LIVE_STALL_FRAMES = 6;       // ~3 s without a new frame: say so
+
+function setLiveUI(on) {
+  liveBadge.classList.remove("stalled");
+  liveBadgeText.textContent = "Live";
+  liveToggle.setAttribute("aria-pressed", on ? "true" : "false");
+  liveToggle.textContent = on ? "⏸" : "⏺";
+  liveToggle.title = on
+    ? "Stop watching my screen"
+    : "Watch my screen continuously (2 frames a second)";
+  liveBadge.hidden = !on;
+  document.getElementById("screenFrame").classList.toggle("live", on);
+  document.getElementById("screenPanelTitle").textContent = on
+    ? "Live screen · recording"
+    : "Live screen";
+}
+
+async function liveFrameOnce() {
+  const res = await api(`/api/live/frame?fps=2&t=${Date.now()}`);
+  if (!res.ok) {
+    // 503 carries the reason (no display, time limit, permissions).
+    let detail = `Screen unavailable (${res.status})`;
+    try {
+      const body = await res.json();
+      if (body && body.detail) detail = body.detail;
+    } catch { /* not JSON; keep the generic message */ }
+    throw new Error(detail);
+  }
+  await showFrame(await res.blob());
+  screenOff.style.display = "none";
+  state.liveFails = 0;
+  markShot();
+  // "Live" must mean a new frame arrived. A badge that keeps claiming Live on a
+  // stalled stream is worse than no badge: it says the screen is being watched
+  // when it is not.
+  const tick = Number(res.headers.get("X-Aegis-Tick") || 0);
+  if (tick && tick !== state.liveTick) {
+    state.liveTick = tick;
+    state.liveStalls = 0;
+    liveBadge.classList.remove("stalled");
+    liveBadgeText.textContent = "Live";
+  } else {
+    state.liveStalls += 1;
+    if (state.liveStalls >= LIVE_STALL_FRAMES) {
+      liveBadge.classList.add("stalled");
+      liveBadgeText.textContent = "Stalled";
+    }
+  }
+}
+
+async function liveLoop() {
+  if (!state.live) return;
+  try {
+    await liveFrameOnce();
+  } catch (err) {
+    state.liveFails += 1;
+    if (!state.live) return;                     // stopped while waiting
+    if (state.liveFails >= LIVE_MAX_FAILURES) {
+      stopLive(`Live view stopped — ${err.message || err}`);
+      return;
+    }
+    screenOff.style.display = "";
+    screenOff.textContent = err.message || String(err);
+  }
+  if (!state.live) return;
+  state.liveTimer = setTimeout(liveLoop, LIVE_INTERVAL_MS);
+}
+
+function startLive() {
+  if (state.live) return;
+  state.live = true;
+  state.liveFails = 0;
+  setLiveUI(true);
+  // Say it out loud once: this is a continuous read of the user's screen.
+  toast("Live view on — Aegis is watching your screen 🎥");
+  liveLoop();
+}
+
+function stopLive(message) {
+  if (!state.live) return;
+  state.live = false;
+  clearTimeout(state.liveTimer);
+  state.liveTimer = null;
+  setLiveUI(false);
+  screenOff.style.display = "none";
+  if (message) toast(message);
+}
+
+liveToggle.addEventListener("click", () => {
+  state.live ? stopLive("Live view off") : startLive();
+});
+
+// A hidden tab is not being watched: capturing it is cost with no reader.
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden && state.live) {
+    stopLive("Live view paused — the tab went to the background");
+  }
+});
 
 // ---------------------------------------------------------------------------
 // Settings
