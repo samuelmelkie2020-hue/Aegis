@@ -922,21 +922,12 @@ def run_desktop(
         _write_heartbeat("WINDOW CREATED")
         proof_ok = True
         if os.environ.get("AEGIS_WINDOW_PROOF"):
-            # Close it ourselves: a runner has nobody to click the X, and the
-            # point of the run is "a window existed", not "someone used it".
-            def _close_soon() -> None:
-                time.sleep(float(os.environ.get("AEGIS_WINDOW_PROOF_SECONDS", "6")))
-                _write_heartbeat("WINDOW PROOF OK — closing")
-                try:
-                    window.destroy()
-                except Exception:  # pragma: no cover - backend dependent
-                    pass
-                # Cocoa's run loop does not necessarily end when the last window
-                # does (pywebview keeps it alive), so the proof run must stop the
-                # process itself. It has already recorded WINDOW CREATED.
-                os._exit(0)
-
-            threading.Thread(target=_close_soon, name="aegis-window-proof", daemon=True).start()
+            # Record the proof, then leave the process alone: CI kills it once it
+            # has read this line. Closing a GUI from another thread is what turned
+            # a working window into a CLR crash on Windows (0xE0434352) and into a
+            # hung Cocoa loop on macOS. The window is the evidence; how the process
+            # ends is not part of the claim.
+            _write_heartbeat("WINDOW PROOF: window is open and serving")
         _print_safe(f"\n  🛡 Aegis is running as a desktop app (port {chosen}).")
         _print_safe("     Close the window to quit.\n")
 

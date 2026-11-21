@@ -765,8 +765,13 @@ def test_the_linux_bundle_carries_gtk_typelibs():
     assert "list(_typelibs)" in spec, "the typelibs must actually reach datas"
 
 
-def test_the_window_proof_ends_the_process_even_if_the_loop_does_not(monkeypatch, tmp_path):
-    """macOS: destroying the window does not end Cocoa's run loop."""
+def test_the_window_proof_records_the_window_without_killing_the_process(monkeypatch, tmp_path):
+    """A GUI process must not be killed from a thread to "prove" it worked.
+
+    Doing that is what produced a CLR abort on Windows (0xE0434352) and a Cocoa
+    loop that refused to end on macOS — both while a real window was open. The
+    evidence is the log line; the runner stops the process afterwards.
+    """
     import sys
     import types
 
@@ -802,4 +807,7 @@ def test_the_window_proof_ends_the_process_even_if_the_loop_does_not(monkeypatch
     monkeypatch.setattr(desktop, "_adopt_local_model", lambda **k: None)
 
     assert desktop.run_desktop(port=0) == 0
-    assert exits == [0], "the proof run must end the process itself"
+    log = (tmp_path / "aegis-startup.log").read_text(encoding="utf-8")
+    assert "WINDOW CREATED" in log
+    assert "window is open and serving" in log
+    assert exits == [], "the process must be stopped by the runner, not by itself"
