@@ -9,14 +9,15 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install -r requirements-dev.txt
-      - name: which tests fail on windows
+      - name: run the bootstrap self-check directly
         shell: pwsh
         env:
           AEGIS_NO_GUI_ERRORS: "1"
         run: |
-          python -m pytest -q --tb=short 2>&1 | Out-File -Encoding utf8 out.txt
-          Get-Content out.txt | Select-Object -Last 60 | ForEach-Object {
-            $line = $_ -replace '%','%25' -replace "`r",'' -replace "`n",'%0A'
-            Write-Host "::error::$line"
+          $out = python packaging/entry.py --self-check 2>&1 | Out-String
+          $code = $LASTEXITCODE
+          foreach ($line in ($out -split "`r?`n")) {
+            $safe = $line -replace '%','%25'
+            Write-Host "::error::EXIT=$code | $safe"
           }
           exit 0
