@@ -150,7 +150,13 @@ jobs:
           $crash = Join-Path $env:APPDATA 'Aegis\aegis-crash.log'
           if (Test-Path $crash) { Get-Content $crash -Tail 20; Copy-Item $crash artifacts\windows-crash.log }
           $created = (Test-Path $log) -and (Select-String -Path $log -Pattern 'WINDOW CREATED')
+          $reason = ''
+          if (Test-Path $log) {
+            $hit = Select-String -Path $log -Pattern 'window FAILED|FAILED to start|could not be created' | Select-Object -Last 1
+            if ($hit) { $reason = $hit.Line.Trim() }
+          }
           Write-Host "window created: $created"
+          Write-Host "reason: $reason"
           try {
             Add-Type -AssemblyName System.Windows.Forms, System.Drawing
             $b = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
@@ -161,7 +167,7 @@ jobs:
             Write-Host 'screenshot saved'
           } catch { Write-Host "screenshot skipped: $_" }
           if ($code -ne 0 -or -not $created) {
-            Write-Host "::error title=window-proof::exit=$code created=$created — see the uploaded artifacts for the startup log"
+            Write-Host "::error title=window-proof::exit=$code created=$created :: $reason"
             exit 1
           }
 
@@ -182,9 +188,11 @@ jobs:
           [ -f "$CRASH" ] && { tail -25 "$CRASH"; cp "$CRASH" artifacts/linux-crash.log; }
           created=no
           grep -q "WINDOW CREATED" "$LOG" 2>/dev/null && created=yes
+          reason=$(grep -E "window FAILED|FAILED to start|could not be created" "$LOG" 2>/dev/null | tail -1 | tr -d '\r' | cut -c1-300)
           echo "window created: $created"
+          echo "reason: $reason"
           if [ "$code" -ne 0 ] || [ "$created" != yes ]; then
-            echo "::error title=window-proof::exit=$code created=$created — see the uploaded artifacts"
+            echo "::error title=window-proof::exit=$code created=$created :: $reason"
             exit 1
           fi
 
@@ -208,9 +216,11 @@ jobs:
           screencapture -x artifacts/macos-desktop.png || true
           created=no
           grep -q "WINDOW CREATED" "$LOG" 2>/dev/null && created=yes
+          reason=$(grep -E "window FAILED|FAILED to start|could not be created" "$LOG" 2>/dev/null | tail -1 | tr -d '\r' | cut -c1-300)
           echo "window created: $created"
+          echo "reason: $reason"
           if [ "$code" -ne 0 ] || [ "$created" != yes ]; then
-            echo "::error title=window-proof::exit=$code created=$created — see the uploaded artifacts"
+            echo "::error title=window-proof::exit=$code created=$created :: $reason"
             exit 1
           fi
 
