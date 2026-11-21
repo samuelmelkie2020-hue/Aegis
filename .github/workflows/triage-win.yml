@@ -20,10 +20,16 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements-dev.txt
-      - name: Pytest (collect the failure)
+      - name: Install pyinstaller (as the build job does)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt pyinstaller
+
+      - name: Pytest under the build job's conditions
         shell: bash
         env:
           AEGIS_NO_GUI_ERRORS: "1"
+          PYTEST_ADDOPTS: "-p no:cacheprovider"
         run: |
           set +e
           python -m pytest -q > pytest-out.txt 2>&1
