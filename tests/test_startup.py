@@ -193,3 +193,64 @@ def test_the_bootstrap_runs_the_self_check_end_to_end():
     assert completed.returncode == 0, completed.stdout + completed.stderr
     assert "All checks passed" in completed.stdout
     assert "server:" in completed.stdout
+
+
+# ---------------------------------------------------------------------------
+# WebView2 detection: a found runtime must never be reported as missing
+# ---------------------------------------------------------------------------
+
+def _load_entry_module():
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("aegis_entry", ENTRY)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_a_webview2_runtime_that_exists_is_not_reported_missing():
+    """The bug this shipped with: success was truthy, and truthy meant failure.
+
+    The first version returned the *version string* when the runtime was found
+    and ``None`` when it was not, and the caller did ``if missing:``. On any
+    Windows PC that actually had WebView2 — i.e. almost all of them — Aegis
+    refused to start and told the user to install what was already there.
+    """
+    entry = _load_entry_module()
+    found, detail = entry._webview2_status()
+    assert isinstance(found, bool), "found/not-found must be an explicit boolean"
+    assert isinstance(detail, str) and detail
+    if not sys.platform.startswith("win"):
+        assert found is True, "a non-Windows run must not claim the runtime is missing"
+
+
+def test_the_caller_treats_only_an_explicit_false_as_missing():
+    source = _entry_source()
+    main = source[source.index("def main()"):]
+    assert "found, detail = _webview2_status()" in main
+    assert "if missing:" not in main, "the inverted truthiness check is back"
+
+
+def test_a_registry_read_cannot_crash_startup():
+    """A locked-down or partially readable registry must fall through."""
+    entry = _load_entry_module()
+    source = _entry_source()
+    body = source[source.index("def _webview2_status()"):]
+    body = body[: body.index("\ndef _already_running")]
+    assert "except OSError" in body
+    assert "except Exception" in body
+    assert entry._webview2_status()[0] in (True, False)
+
+
+def test_the_two_webview2_checks_agree_on_the_shape():
+    """entry.py and desktop.py each detect WebView2; both must be usable.
+
+    They are duplicated on purpose (the bootstrap runs before the app imports),
+    so the risk is that one of them drifts into a different contract.
+    """
+    desktop = (ROOT / "aegis" / "desktop.py").read_text(encoding="utf-8")
+    entry = _entry_source()
+    assert "def _webview2_version()" in desktop
+    assert "def _webview2_status()" in entry
+    # desktop's returns a version string or None; the caller must test truthiness
+    assert "if not version:" in desktop

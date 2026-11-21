@@ -76,6 +76,11 @@ def _write(line: str) -> None:
 def _crash(reason: str, exc: BaseException | None = None) -> None:
     """Record a fatal error, then try to show it in a window."""
     _write(f"FATAL: {reason}")
+    # A console (or CI) must see it too: a diagnostic that only writes a file is
+    # how a fatal error stays invisible in the very runs that would catch it.
+    print(f"\nAegis could not start: {reason}\n", file=sys.stderr)
+    if exc is not None:
+        traceback.print_exception(type(exc), exc, exc.__traceback__)
     if exc is not None:
         _write("".join(traceback.format_exception(type(exc), exc, exc.__traceback__)))
 
@@ -147,44 +152,53 @@ def _applescript_string(text: str) -> str:
     return '"' + text.replace("\\", "\\\\").replace('"', '\\"') + '"'
 
 
-def _webview2_missing() -> str | None:
-    """Return a reason string when the WebView2 runtime is absent, else None.
+def _webview2_status() -> tuple[bool, str]:
+    """Is the Edge WebView2 runtime installed? ``(found, detail)``.
 
     Checked by hand rather than by asking pywebview, because pywebview only
-    discovers the runtime when it tries to create a window — after the server
-    has started, so its failure is the confusing one. The two registry keys are
-    what Microsoft documents for detection.
+    discovers the runtime when it tries to create a window — after the server has
+    started, so its failure is the confusing one. The registry keys are the ones
+    Microsoft documents for detection.
+
+    Returns an explicit ``(found, detail)`` pair rather than "a string when the
+    runtime is missing": the first version of this returned the *version* on
+    success, which the caller read as a failure and refused to start — a bug that
+    only appeared on a Windows machine that had WebView2, i.e. almost all of them.
     """
     try:
         import winreg
     except ImportError:  # pragma: no cover - only on Windows
-        return None
+        return True, "not Windows: nothing to check"
 
-    keys = (
-        (winreg.HKEY_LOCAL_MACHINE,
-         r"SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"),
-        (winreg.HKEY_LOCAL_MACHINE,
-         r"SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"),
-        (winreg.HKEY_CURRENT_USER,
-         r"SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"),
-    )
-    for root, path in keys:
+    # Note: not raw strings. A raw string cannot end with a backslash, and these
+    # key paths are prefix + client, so the prefix needs a trailing separator.
+    client = "Microsoft\\EdgeUpdate\\Clients\\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
+    for root, prefix in (
+        (winreg.HKEY_LOCAL_MACHINE, "SOFTWARE\\WOW6432Node\\"),
+        (winreg.HKEY_LOCAL_MACHINE, "SOFTWARE\\"),
+        (winreg.HKEY_CURRENT_USER, "SOFTWARE\\"),
+    ):
         try:
-            with winreg.OpenKey(root, path) as key:
+            with winreg.OpenKey(root, prefix + client) as key:
                 version = winreg.QueryValueEx(key, "pv")[0]
-                if version and version != "0.0.0.0":
-                    return f"runtime {version}"
         except OSError:
             continue
+        except Exception:  # noqa: BLE001 - a registry read must never be fatal
+            continue
+        if version and version != "0.0.0.0":
+            return True, f"runtime {version}"
 
-    # The runtime also drops a loader DLL in one of these locations.
+    # Some managed installs have no EdgeUpdate key but do ship the loader.
     for candidate in (
-        os.path.expandvars(r"%ProgramFiles(x86)%\Microsoft\EdgeWebView\Application"),
-        os.path.expandvars(r"%ProgramFiles%\Microsoft\EdgeWebView\Application"),
+        os.path.expandvars("%ProgramFiles(x86)%\\Microsoft\\EdgeWebView\\Application"),
+        os.path.expandvars("%ProgramFiles%\\Microsoft\\EdgeWebView\\Application"),
     ):
-        if os.path.isdir(candidate):
-            return candidate
-    return "no WebView2 runtime in the registry or Program Files"
+        try:
+            if candidate and os.path.isdir(candidate):
+                return True, candidate
+        except Exception:  # noqa: BLE001
+            continue
+    return False, "no WebView2 runtime in the registry or Program Files"
 
 
 def _already_running() -> bool:
@@ -225,9 +239,9 @@ def main() -> int:
         return 1
 
     if sys.platform.startswith("win"):
-        missing = _webview2_missing()
-        if missing:
-            _write(f"webview2: NOT FOUND ({missing})")
+        found, detail = _webview2_status()
+        _write(f"webview2: {'found' if found else 'NOT FOUND'} ({detail})")
+        if not found:
             _crash(
                 "Aegis needs Microsoft Edge WebView2, which is not installed on "
                 "this PC.\n\n"
@@ -238,7 +252,6 @@ def main() -> int:
                 None,
             )
             return 1
-        _write(f"webview2: found ({missing})")
 
     if len(sys.argv) == 1 and _already_running():
         _write("port 8000 is already in use: another copy is probably running")

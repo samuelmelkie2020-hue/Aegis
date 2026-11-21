@@ -349,10 +349,12 @@ def _webview2_version() -> str | None:
         try:
             with winreg.OpenKey(root, prefix + guide) as key:
                 version = winreg.QueryValueEx(key, "pv")[0]
-                if version and version != "0.0.0.0":
-                    return version
         except OSError:
             continue
+        except Exception:  # noqa: BLE001 - a registry read must never be fatal
+            continue
+        if version and version != "0.0.0.0":
+            return version
     return None
 
 
