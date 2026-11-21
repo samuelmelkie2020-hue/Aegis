@@ -5,4 +5,4 @@ Reason: The desktop window could not be created. This is almost always a missing
 Everything works exactly the same there. This tab is the app.
 
 Open this address:
-http://127.0.0.1:8000/?token=2QiYdQaXTDhHzeVkch8qdeNAsf1Zgzcf5ZCXULX_CmY
+http://127.0.0.1:8000/?token=hz1le0v_7QbN0faNwyAsO04kizGl1hQNJozi34vNjz4
