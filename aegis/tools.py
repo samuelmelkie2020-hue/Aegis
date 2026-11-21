@@ -14,11 +14,15 @@ import platform
 import shutil
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from .safety import check_readable, check_writable, redact, redact_result
+
+if TYPE_CHECKING:  # Pillow is imported lazily: --self-check must not need it
+    from PIL.Image import Image as _Image
 
 MAX_IMAGE_WIDTH = 1280   # screenshots are downscaled to this for the model
 MAX_OUTPUT = 4000        # max characters of tool output fed back to the model
@@ -30,6 +34,23 @@ MAX_SEARCH_HITS = 30     # matches returned by search_files
 # The scale factor of the most recent screenshot, so `click` can map the
 # coordinates the model read off the (downscaled) image back to real pixels.
 _last_scale: tuple[float, int, int] = (1.0, 0, 0)
+# The same screenshot in full colour, kept for the HUD. DOWNSCALED is what the
+# model sees (cheap in tokens); this is what the user sees (readable text).
+_last_full: _Image | None = None
+
+# Frames for the live HUD. Deliberately conservative: a screen recording is a
+# continuous read of everything the user sees, so it is opt-in, capped in rate,
+# and abandoned the moment nobody is looking at it.
+LIVE_MAX_FPS = 4.0          # hard ceiling, whatever the client asks for
+LIVE_IDLE_STOP = 120.0      # seconds: no caller has asked for a frame
+LIVE_MAX_SECONDS = 1800.0   # one run cannot be left on indefinitely
+LIVE_MAX_WIDTH = 1600       # the browser panel is ~600px wide
+_live_lock = threading.Lock()
+_live_requests = 0
+_live_opened = 0.0
+_live_frame = ""            # last JPEG, so a fast poll re-sends it
+_live_frame_info: dict[str, Any] = {}
+_live_tick = 0              # increments per new frame: proof the view is live
 
 
 # Tools that modify the system or control the keyboard/mouse.
@@ -277,20 +298,43 @@ def _pyautogui():
 # Tool implementations
 # ---------------------------------------------------------------------------
 
+def capture_screen() -> tuple[_Image, _Image, float, tuple[int, int]]:
+    """Grab the primary display once.
+
+    Returns ``(for_the_model, for_the_human, scale, (display_w, display_h))``:
+    two differently-scaled copies of a single grab, so one capture feeds both the
+    LLM (small — it costs tokens) and the HUD (large — the user has to read it).
+    """
+    import mss
+    from PIL import Image
+
+    with mss.mss() as sct:
+        monitor = sct.monitors[1] if len(sct.monitors) > 1 else sct.monitors[0]
+        shot = sct.grab(monitor)
+        img = Image.frombytes("RGB", shot.size, shot.rgb)
+
+    full_size = (img.width, img.height)
+    scale = 1.0
+    for_the_model = img
+    if img.width > MAX_IMAGE_WIDTH:
+        scale = MAX_IMAGE_WIDTH / img.width
+        for_the_model = img.resize((MAX_IMAGE_WIDTH, max(1, int(img.height * scale))))
+
+    # The HUD panel is a fraction of the screen; sending it a 4K frame wastes
+    # bandwidth for detail nobody can see.
+    for_the_human = img
+    if img.width > LIVE_MAX_WIDTH:
+        human_scale = LIVE_MAX_WIDTH / img.width
+        for_the_human = img.resize((LIVE_MAX_WIDTH, max(1, int(img.height * human_scale))))
+
+    global _last_full
+    _last_full = for_the_human
+    return for_the_model, for_the_human, scale, full_size
+
+
 def see_screen() -> dict[str, Any]:
     try:
-        import mss
-        from PIL import Image
-
-        with mss.mss() as sct:
-            monitor = sct.monitors[1] if len(sct.monitors) > 1 else sct.monitors[0]
-            shot = sct.grab(monitor)
-            img = Image.frombytes("RGB", shot.size, shot.rgb)
-        full_w, full_h = img.width, img.height
-        scale = 1.0
-        if img.width > MAX_IMAGE_WIDTH:
-            scale = MAX_IMAGE_WIDTH / img.width
-            img = img.resize((MAX_IMAGE_WIDTH, max(1, int(img.height * scale))))
+        img, _human, scale, (full_w, full_h) = capture_screen()
         buf = io.BytesIO()
         img.save(buf, "PNG")
         data = base64.b64encode(buf.getvalue()).decode()
@@ -325,6 +369,80 @@ def see_screen() -> dict[str, Any]:
             "screen_width": 960,
             "screen_height": 540,
         }
+
+
+def live_frame(fps: float = 2.0) -> dict[str, Any]:
+    """One frame of the live view, as JPEG.
+
+    ``reused`` tells the browser whether this is a fresh capture or the previous
+    frame re-sent because it asked faster than the limit, and ``tick`` increments
+    once per new frame so the UI can prove the view is actually live.
+
+    Aegis cannot make this read-only once it is on: anything holding the view open
+    is watching the screen. So the server enforces its own limits instead of
+    trusting the client — the rate is clamped, a run ends by itself after
+    LIVE_MAX_SECONDS, and after LIVE_IDLE_STOP with no callers the next frame
+    starts a new run the UI has to re-authorise. Frames go to the caller only;
+    nothing is written to disk.
+    """
+    global _live_requests, _live_opened, _live_frame, _live_frame_info, _live_tick
+
+    now = time.monotonic()
+    with _live_lock:
+        if now - _live_requests > LIVE_IDLE_STOP:
+            _live_opened, _live_frame = now, ""      # idle: this is a new run
+        elif now - _live_opened > LIVE_MAX_SECONDS:
+            return {
+                "ok": False,
+                "reason": "time limit",
+                "detail": (
+                    f"Live view stopped after {LIVE_MAX_SECONDS / 60:.0f} minutes "
+                    "so it cannot be left running by accident. Turn it back on if "
+                    "you still need it."
+                ),
+            }
+        interval = 1.0 / max(1.0, min(LIVE_MAX_FPS, fps))
+        since_last = now - _live_requests
+        cached, cached_info = _live_frame, _live_frame_info
+        _live_requests = now
+
+    # A client polling faster than its cap gets the frame it already has: the cap
+    # has to be enforced here, not by well-behaved JavaScript.
+    if cached and since_last < interval:
+        return {**cached_info, "image": cached, "reused": True}
+
+    try:
+        _model, human, _scale, (full_w, full_h) = capture_screen()
+        buf = io.BytesIO()
+        # JPEG, not PNG: this is a video frame refreshed several times a second,
+        # and a PNG of a busy screen is roughly 5x the bytes for no gain.
+        human.save(buf, "JPEG", quality=70, optimize=True)
+        payload = base64.b64encode(buf.getvalue()).decode()
+    except Exception as exc:
+        return {
+            "ok": False,
+            "reason": "capture",
+            "detail": (
+                f"Screen capture unavailable ({exc}). Aegis needs a display and "
+                "screen-recording permission."
+            ),
+        }
+
+    with _live_lock:
+        _live_tick += 1
+        info = {
+            "ok": True,
+            "format": "jpeg",
+            "tick": _live_tick,
+            "width": human.width,
+            "height": human.height,
+            "screen_width": full_w,
+            "screen_height": full_h,
+            "fps": round(1.0 / interval, 1),
+            "reused": False,
+        }
+        _live_frame, _live_frame_info = payload, info
+    return {**info, "image": payload}
 
 
 def run_command(command: str, cwd: str | None = None) -> dict[str, Any]:

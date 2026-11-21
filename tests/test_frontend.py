@@ -113,6 +113,51 @@ def test_screen_image_has_meaningful_alt_text(html):
 
 
 
+# ---------------------------------------------------------------------------
+# Live view (the screen panel's recording mode)
+# ---------------------------------------------------------------------------
+
+def test_live_toggle_is_a_real_toggle_for_assistive_tech(html):
+    tag = re.search(r'<button[^>]*id="liveToggle"[^>]*>', html).group(0)
+    assert 'aria-pressed="false"' in tag, "off must be the default, and say so"
+    assert "aria-label=" in tag, "an icon-only button needs a name"
+
+
+def test_live_view_starts_off_and_the_badge_is_hidden(html):
+    """The badge is the only signal that the screen is being read."""
+    tag = re.search(r'<div[^>]*id="liveBadge"[^>]*>', html).group(0)
+    assert "hidden" in tag
+
+
+def test_the_panel_says_live_even_while_off(html):
+    """Nobody should have to guess what the toggle turns on."""
+    assert 'id="liveToggle"' in html
+    assert "Watch my screen" in html
+
+
+def test_live_loop_cannot_run_twice(html):
+    """Overlapping polls would queue stale screenshots."""
+    js = (STATIC / "app.js").read_text(encoding="utf-8")
+    body = js[js.index("function startLive"):]
+    body = body[: body.index(chr(10) + "}")]
+    assert "if (state.live) return;" in body
+
+
+def test_live_view_stops_when_the_tab_is_hidden(html):
+    js = (STATIC / "app.js").read_text(encoding="utf-8")
+    assert "visibilitychange" in js
+    assert "document.hidden" in js
+
+
+def test_live_frames_revoke_their_object_urls(html):
+    """A leak here holds every frame of a session in memory."""
+    js = (STATIC / "app.js").read_text(encoding="utf-8")
+    create = js.count("URL.createObjectURL")
+    revoke = js.count("URL.revokeObjectURL")
+    assert create >= 1
+    assert revoke >= create, "every object URL must be released"
+
+
 def test_hud_telemetry_elements_exist():
     """The gauges and bars are driven by ids; a typo shows as a blank dial."""
     markup = (STATIC / "index.html").read_text(encoding="utf-8")
