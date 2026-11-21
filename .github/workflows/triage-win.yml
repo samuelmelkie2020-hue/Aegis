@@ -1,0 +1,56 @@
+name: Triage (Windows)
+
+# TEMPORARY: surfaces the Windows pytest failure as check-run annotations,
+# because the job log endpoint is unreachable from where this is being
+# investigated. Delete once the suite is green.
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  triage:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+      - name: Pytest (collect the failure)
+        shell: bash
+        env:
+          AEGIS_NO_GUI_ERRORS: "1"
+        run: |
+          set +e
+          python -m pytest -q > pytest-out.txt 2>&1
+          echo "exit=$?" >> pytest-out.txt
+          set -e
+          python - <<'PY'
+          import re
+          from pathlib import Path
+
+          text = Path("pytest-out.txt").read_text(encoding="utf-8", errors="replace")
+          # Emit one annotation per failing test, with the assertion line if we
+          # can find it, so the message is readable in the checks API.
+          names = re.findall(r"^FAILED (\S+)", text, re.M)
+          print(f"::error title=triage::{len(names)} failing tests: {', '.join(names[:8])}")
+          blocks = re.split(r"^_{5,} (.+?) _{5,}$", text, flags=re.M)
+          for i in range(1, len(blocks) - 1, 2):
+              title = blocks[i][:120]
+              body = blocks[i + 1]
+              keep = [
+                  ln.strip()
+                  for ln in body.splitlines()
+                  if ln.strip().startswith(("E ", ">", "assert", "AttributeError", "TypeError"))
+              ][:4]
+              detail = " | ".join(keep)[:900] or body.strip()[:600]
+              detail = detail.replace("\n", " ")
+              print(f"::error title={title}::{detail}")
+          tail = text.strip().splitlines()[-6:]
+          print("::error title=tail::" + " | ".join(tail)[:900])
+          print(text[-4000:])
+          PY
