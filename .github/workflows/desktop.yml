@@ -51,6 +51,11 @@ jobs:
           pip install -r requirements-dev.txt pyinstaller
 
       - name: Tests
+        # bash on every OS: under pwsh a native command that writes to stderr can
+        # abort the step (NativeCommandError), and pytest writes to stderr for
+        # warnings and the crash-log hint. Same command, same assertions, exit code
+        # still decides pass/fail — this job just stops failing for that reason.
+        shell: bash
         env:
           # No display on a runner: a crash dialog would block forever.
           AEGIS_NO_GUI_ERRORS: "1"
