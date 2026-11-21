@@ -622,6 +622,17 @@ def run_desktop(*, port: int | None = None, debug: bool = False) -> int:
         except Exception:  # pragma: no cover - optional in older versions
             pass
 
+        # An update replaces this executable, which the OS will not allow while
+        # it runs. The updater starts a helper that waits for this process to
+        # die; this hook is what lets it die without the user being told to
+        # close the window by hand.
+        from . import updates
+
+        # A test double (or an older pywebview) may not offer destroy; the
+        # update then still installs, it just waits for the user to quit.
+        destroy = getattr(window, "destroy", None)
+        updates.register_restart_hook(destroy if callable(destroy) else None)
+
         print(f"\n  🛡 Aegis is running as a desktop app (port {chosen}).")
         print("     Close the window to quit.\n")
 

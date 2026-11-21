@@ -16,6 +16,13 @@ const shotTime = document.getElementById("shotTime");
 const liveToggle = document.getElementById("liveToggle");
 const liveBadge = document.getElementById("liveBadge");
 const liveBadgeText = document.getElementById("liveBadgeText");
+const updateCard = document.getElementById("updateCard");
+const updateTitle = document.getElementById("updateTitle");
+const updateDetail = document.getElementById("updateDetail");
+const updateGet = document.getElementById("updateGet");
+const updateInstall = document.getElementById("updateInstall");
+const updateLater = document.getElementById("updateLater");
+const checkUpdates = document.getElementById("checkUpdates");
 const safeModeEl = document.getElementById("safeMode");
 const voiceRepliesEl = document.getElementById("voiceReplies");
 const assistantNameEl = document.getElementById("assistantName");
@@ -689,6 +696,127 @@ document.addEventListener("visibilitychange", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Updates
+//
+// Three separate steps, on purpose: checking is read-only and happens on its
+// own; downloading is a click; installing is a second click that reuses the
+// approval flow, because it replaces the program the user is running. Nothing
+// here can restart the app without that last click.
+// ---------------------------------------------------------------------------
+const UPDATE_POLL_MS = 6 * 60 * 60 * 1000;   // twice a day is enough
+
+function showUpdate(stateName, title, detail, opts = {}) {
+  updateCard.hidden = false;
+  updateCard.classList.toggle("busy", stateName === "busy");
+  updateCard.classList.toggle("failed", stateName === "failed");
+  updateTitle.textContent = title;
+  updateDetail.textContent = detail;
+  updateGet.hidden = !opts.canGet;
+  updateGet.disabled = stateName === "busy";
+  updateInstall.hidden = !opts.canInstall;
+  updateGet.textContent = opts.getLabel || "Get it";
+}
+
+function hideUpdate() {
+  updateCard.hidden = true;
+  updateCard.classList.remove("busy", "failed");
+}
+
+async function checkForUpdates({ quiet = true } = {}) {
+  try {
+    const res = await api("/api/update/check");
+    const info = await res.json();
+    if (!res.ok) throw new Error(info.detail || `HTTP ${res.status}`);
+
+    if (info.available) {
+      showUpdate("ready", `Aegis ${info.latest.version} is available`, 
+        info.installable
+          ? `You are on ${info.current}. Download it, then restart to switch over.`
+          : (info.reason || "A newer version exists."),
+        { canGet: Boolean(info.installable) });
+      return info;
+    }
+    if (!quiet) {
+      showUpdate("ready", "Up to date", info.reason || `You are on ${info.current}.`);
+      setTimeout(hideUpdate, 4000);
+    }
+    return info;
+  } catch (err) {
+    if (!quiet) {
+      showUpdate("failed", "Could not check", err.message || String(err));
+      setTimeout(hideUpdate, 6000);
+    }
+    return null;
+  }
+}
+
+async function downloadUpdate() {
+  showUpdate("busy", "Downloading…", "Verifying the download before it is allowed to replace anything.");
+  try {
+    const res = await api("/api/update/download", { method: "POST" });
+    const info = await res.json();
+    if (!res.ok || !info.ok) throw new Error(info.detail || `HTTP ${res.status}`);
+    showUpdate("ready", `Aegis ${info.staged.version} is ready`,
+      "Verified. It installs the next time you restart.",
+      { canInstall: true });
+  } catch (err) {
+    showUpdate("failed", "Download failed", err.message || String(err));
+  }
+}
+
+async function installUpdate() {
+  showUpdate("busy", "Installing…", "Aegis will close and reopen on the new version.");
+  try {
+    // Step one: ask the server to register the install. The server decides what
+    // runs; the reply is an approval id, not a command.
+    const res = await api("/api/update/install", { method: "POST" });
+    const info = await res.json();
+    if (!res.ok || !info.ok) throw new Error(info.detail || `HTTP ${res.status}`);
+
+    if (!window.confirm(`${info.description}\n\nAegis will close and reopen.`)) {
+      await api("/api/approve/deny", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ approval_id: info.approval_id }),
+      }).catch(() => {});
+      showUpdate("ready", "Install cancelled", "Nothing was changed.", { canInstall: true });
+      return;
+    }
+
+    // Step two: redeem it. The app closes shortly after this returns.
+    const done = await api("/api/approve", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ approval_id: info.approval_id }),
+    });
+    const result = await done.json();
+    if (!done.ok || !result.ok) throw new Error(result.result || result.detail || "Install failed");
+    updateDetail.textContent = "Closing — Aegis will reopen in a moment.";
+  } catch (err) {
+    showUpdate("failed", "Could not install", err.message || String(err));
+  }
+}
+
+updateGet.addEventListener("click", downloadUpdate);
+updateInstall.addEventListener("click", installUpdate);
+updateLater.addEventListener("click", hideUpdate);
+checkUpdates.addEventListener("click", () => checkForUpdates({ quiet: false }));
+
+// The user dismissed this version once; do not nag again this session.
+async function refreshUpdateState() {
+  try {
+    const res = await api("/api/update");
+    const info = await res.json();
+    if (info.staged && info.installable) {
+      showUpdate("ready", `Aegis ${info.staged.version} is ready`,
+        "Downloaded and verified. Restart to install it.", { canInstall: true });
+      return;
+    }
+    if (info.enabled) checkForUpdates();
+  } catch { /* the update UI is optional */ }
+}
+
+// ---------------------------------------------------------------------------
 // Settings
 // ---------------------------------------------------------------------------
 const PROVIDERS = {
@@ -1067,6 +1195,9 @@ refreshScreenImage();
 
 // The version comes from the server, so the footer cannot claim a build that
 // is not the one running (it said v1.0 for four releases).
+refreshUpdateState();
+setInterval(() => checkForUpdates(), UPDATE_POLL_MS);
+
 api("/api/health")
   .then((r) => (r.ok ? r.json() : null))
   .then((info) => {

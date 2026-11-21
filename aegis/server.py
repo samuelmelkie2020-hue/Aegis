@@ -28,7 +28,7 @@ from fastapi.responses import (
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import __version__, approvals
+from . import __version__, approvals, updates
 from .config import (
     SettingsError,
     config_problem,
@@ -369,6 +369,96 @@ def get_live_frame(fps: float = Query(default=2.0, ge=0.1, le=30)) -> Response:
             "X-Aegis-Fps": str(frame.get("fps", "")),
             "X-Aegis-Tick": str(frame.get("tick", "")),
         },
+    )
+
+
+# ---------------------------------------------------------------------------
+# Updates
+#
+# Checking is read-only and safe to call at startup. Downloading is explicit.
+# *Installing* replaces the executable, so it is a deliberate two-step: the
+# request registers an approval bound to this session, and the same
+# /api/approve route that guards "run this command" redeems it. A page cannot
+# swap the payload in between, and it cannot be replayed.
+# ---------------------------------------------------------------------------
+
+@app.get("/api/update", dependencies=API)
+def update_status() -> dict:
+    """What version this is, and whether an update is downloaded and waiting."""
+    return updates.update_status()
+
+
+@app.get("/api/update/check", dependencies=API)
+def update_check() -> dict:
+    """Ask GitHub for the newest release. Nothing is downloaded."""
+    return updates.check_for_update()
+
+
+@app.post("/api/update/download", dependencies=API)
+def update_download(request: Request) -> JSONResponse:
+    """Download, verify (size + SHA-256) and self-check the newest release.
+
+    Which build to fetch comes from the *server's* last check, never from the
+    request body: a caller who could name the URL could name any executable.
+    """
+    if not updates.updates_enabled():
+        return JSONResponse({"ok": False, "detail": "Updates are turned off."}, status_code=409)
+
+    status = updates.check_for_update()
+    if not status.get("available"):
+        return JSONResponse(
+            {"ok": False, "detail": status.get("reason") or status.get("error") or "No update available."},
+            status_code=409,
+        )
+    if not status.get("installable"):
+        return JSONResponse({"ok": False, "detail": status.get("reason")}, status_code=409)
+
+    release = updates.last_release()
+    if release is None:  # pragma: no cover - check_for_update just set it
+        return JSONResponse({"ok": False, "detail": "No release to download."}, status_code=409)
+
+    try:
+        info = updates.download_and_stage(release)
+    except updates.UpdateError as exc:
+        return JSONResponse({"ok": False, "detail": str(exc)}, status_code=422)
+    except Exception as exc:  # never leave the UI without a reason
+        log.warning("Update download failed", exc_info=True)
+        return JSONResponse(
+            {"ok": False, "detail": f"The update could not be downloaded ({exc})."},
+            status_code=500,
+        )
+    return JSONResponse(
+        {
+            "ok": True,
+            "detail": f"Aegis {info['version']} is downloaded and verified. Restart to install it.",
+            "staged": info,
+        }
+    )
+
+
+@app.post("/api/update/install", dependencies=API)
+def update_install(request: Request) -> JSONResponse:
+    """Register the install as an approval. Redeem it via /api/approve."""
+    plan = updates.apply_plan()
+    if not plan.get("ok"):
+        return JSONResponse({"ok": False, "detail": plan.get("detail")}, status_code=409)
+
+    version = plan.get("version") or "the downloaded version"
+    item = approvals.register(
+        "install_update",
+        {"version": version},
+        f"Install Aegis {version} and restart. This replaces the app you are running.",
+        _session_token(request),
+    )
+    return JSONResponse(
+        {
+            "ok": True,
+            "approval_id": item.id,
+            "name": item.name,
+            "args": item.args,
+            "description": item.description,
+            "detail": "Confirm to install and restart Aegis.",
+        }
     )
 
 

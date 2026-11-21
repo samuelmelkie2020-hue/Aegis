@@ -258,3 +258,52 @@ def test_script_uses_the_authenticated_fetch_wrapper():
     js = (STATIC / "app.js").read_text(encoding="utf-8")
     bare = re.findall(r'fetch\("/api[^"]*"', js)
     assert not bare, f"unauthenticated API call(s): {bare}"
+
+
+# ---------------------------------------------------------------------------
+# Updates
+# ---------------------------------------------------------------------------
+
+def test_the_update_card_is_hidden_until_there_is_an_update(html):
+    tag = re.search(r'<div[^>]*id="updateCard"[^>]*>', html).group(0)
+    assert "hidden" in tag, "an update banner must not sit there permanently"
+
+
+def test_the_update_card_has_both_steps_and_a_dismiss(html):
+    for button in ("updateGet", "updateInstall", "updateLater"):
+        assert f'id="{button}"' in html, f"{button} is missing"
+
+
+def test_install_is_not_offered_until_a_download_finishes(html):
+    """Install must be the second step, never the first."""
+    tag = re.search(r'<button[^>]*id="updateInstall"[^>]*>', html).group(0)
+    assert "hidden" in tag
+
+
+def test_updates_can_be_checked_by_hand(html):
+    """A user who dismissed a banner must be able to ask again."""
+    assert 'id="checkUpdates"' in html
+    js = (STATIC / "app.js").read_text(encoding="utf-8")
+    assert "checkUpdates.addEventListener" in js
+
+
+def test_installing_asks_for_confirmation_in_the_page(html):
+    """The app is about to close itself; that cannot be a single stray click."""
+    js = (STATIC / "app.js").read_text(encoding="utf-8")
+    install = js[js.index("async function installUpdate"):]
+    install = install[: install.index("updateGet.addEventListener")]
+    assert "window.confirm" in install
+    assert "/api/update/install" in install
+    assert "/api/approve" in install
+
+
+def test_the_update_dot_respects_reduced_motion(html):
+    """The pulse is decoration; the media query already neutralises it."""
+    css = (STATIC / "style.css").read_text(encoding="utf-8")
+    reduced = css[css.index("prefers-reduced-motion"):]
+    assert "animation-duration: 0.01ms" in reduced
+
+
+def test_a_failed_update_is_shown_not_swallowed(html):
+    js = (STATIC / "app.js").read_text(encoding="utf-8")
+    assert 'showUpdate("failed"' in js

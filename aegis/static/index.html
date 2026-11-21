@@ -124,7 +124,24 @@
           <input type="checkbox" id="voiceReplies" checked />
           <span>Speak replies</span>
         </label>
-        <p class="foot-note" id="footNote">local-first · your key stays on this PC</p>
+        <!-- Update banner: hidden until a check finds something. It sits above
+             the footer rather than in a modal so it cannot cover the chat. -->
+        <div class="update-card" id="updateCard" hidden>
+          <div class="update-head">
+            <span class="update-dot" id="updateDot"></span>
+            <strong id="updateTitle">Update available</strong>
+          </div>
+          <p class="update-detail" id="updateDetail"></p>
+          <div class="update-actions">
+            <button id="updateGet" class="tiny-btn update-btn">Get it</button>
+            <button id="updateInstall" class="tiny-btn update-btn" hidden>Restart &amp; install</button>
+            <button id="updateLater" class="tiny-btn" title="Not now"
+                    aria-label="Dismiss this update notice">✕</button>
+          </div>
+        </div>
+
+        <p class="foot-note"><span id="footNote">local-first · your key stays on this PC</span>
+          · <button id="checkUpdates" class="link-btn" title="Check for a new version">updates</button></p>
       </footer>
     </aside>
 

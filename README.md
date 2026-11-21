@@ -14,6 +14,7 @@ Ask it in plain English (or by voice) and it will look at your screen, run comma
 |---|---|
 | 👀 **Sees your PC** | Captures your screen and analyzes it with a vision model |
 | 🔴 **Live view** | Watch your own screen in the app at 2 fps — or let it watch while you talk to it |
+| 🔄 **Updates itself** | Sees a new release, downloads it, checks it, and installs it on restart — no zip again |
 | 💻 **Controls your PC** | Runs shell commands, opens apps, types, presses shortcuts, clicks |
 | 📂 **File assistant** | Lists, reads, writes and searches files |
 | 🖥 **System monitor** | CPU, memory, disk, battery, uptime, top processes |
@@ -130,6 +131,39 @@ How is my PC doing?
 
 ---
 
+### 🔄 Updating
+
+Aegis checks for a new release when it starts (and every six hours) and offers it
+in the sidebar. **Get it** downloads in the background; **Restart & install**
+closes the app and reopens it on the new version. No zip, no replacing files by
+hand, and your settings, token and conversations are untouched because they live
+outside the app.
+
+An updater downloads an executable, so the checks are the point:
+
+| Check | Why |
+|---|---|
+| Only `https://github.com/…` and GitHub's asset CDN | The URL comes from the GitHub API, but a compromised release would point anywhere |
+| **SHA-256 must match the digest GitHub publishes** | A truncated, corrupted or swapped download is deleted, never unpacked |
+| 250 MB ceiling, exact byte count | The real asset is ~28 MB |
+| The new build must pass its own `--self-check` | A build that cannot start must never replace one that can |
+| HTTPS only, no downgrade | — |
+
+And it is deliberate: the download is a click, the install is a second click, and
+the install itself goes through the same **Approve / Deny** path as a shell
+command — the page can only redeem an id the server issued, once, for its own
+session. The payload and version are chosen by the server, never by the request.
+
+Installing from source is refused on purpose: replacing a git checkout would
+destroy work. `git pull` instead. Updates can be turned off completely with
+`AEGIS_NO_UPDATES=1`.
+
+If something goes wrong, the previous build is kept as `Aegis.old` next to the new
+one, and the helper's log is at `<data dir>/update/update.log` (or
+`relaunch.log`).
+
+---
+
 ## 🛡 Safety
 
 - **Ask before acting** (safe mode) is ON by default: Aegis pauses before running commands, opening apps, typing, clicking or writing files, and shows an **Approve / Deny** card. Turn it off only on machines you fully trust it with.
@@ -184,6 +218,8 @@ Environment variables:
 |---|---|---|
 | `AEGIS_PORT` | `8000` | Port to serve on |
 | `AEGIS_HOST` | `127.0.0.1` | Bind address. `0.0.0.0` exposes it on your network (token still required) |
+| `AEGIS_NO_UPDATES` | unset | Set to `1` to disable update checks and installs entirely |
+| `AEGIS_DATA_DIR` | per-OS | Where settings, the token and update files live |
 | `AEGIS_CONFIG` | `./aegis_config.json` | Path to the config file |
 | `AEGIS_TOKEN` | *(generated)* | Use a fixed access token instead of `.aegis_token` |
 | `AEGIS_TOKEN_FILE` | `./.aegis_token` | Where the generated token is stored |
@@ -200,7 +236,7 @@ Environment variables:
 
 ```bash
 pip install -r requirements-dev.txt   # runtime deps + pytest + ruff
-python -m pytest -q                   # 279 tests, ~3s, no display or API key needed
+python -m pytest -q                   # 342 tests, ~3s, no display or API key needed
 ruff check .                          # lint (config lives in pyproject.toml)
 python run.py --self-check            # diagnose a machine: data dir, server, webview
 node --check aegis/static/app.js      # front-end syntax
@@ -329,6 +365,9 @@ Without an API key, a built-in **demo brain** handles simple intents so you can 
 | Mic button says unsupported | Voice input needs Chrome or Edge (Web Speech API). |
 | "I couldn't reach the AI model" | Check base URL / key / model in ⚙️ Settings. Ollama users: make sure `ollama serve` is running and you `ollama pull llama3.2-vision`. |
 | Aegis acts but nothing types | Focus the window you want to type into — typing goes to whatever is focused. |
+| Update says "cannot verify" / "does not match the checksum" | The download was corrupted or intercepted. It was deleted, not installed. Try again; if it repeats, download the release manually. |
+| Update says it cannot write to the app folder | Aegis lives in a folder you do not own (e.g. `C:\Program Files`). Move the `Aegis` folder to Downloads or Desktop and update again. |
+| Update failed to install | The previous build is intact as `Aegis.old`. The helper's log says what happened: `<data dir>/update/update.log`. |
 | Port already in use | `python run.py --port 8080` (or `AEGIS_PORT=8080`) — the starters honour it too |
 | *"No module named webview"* | `pip install pywebview`; on Linux also install WebKitGTK. Or run `python run.py --web` |
 | Desktop window is blank / white | Check `aegis-crash.log` in the data folder; run `python run.py --self-check` and retry with `--debug` |
