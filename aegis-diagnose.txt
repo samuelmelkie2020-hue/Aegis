@@ -1,10 +1,10 @@
-Aegis 1.5.0 — startup diagnosis
+Aegis 1.6.0 — startup diagnosis
   python:      3.11.2
   platform:    Linux 6.1.158+ (x86_64)
   frozen:      False
   executable:  /tmp/venv/bin/python
   data dir:    /home/user/claw
-  settings:    /tmp/aegis-tests-6e7s8j6b/aegis_config.json
+  settings:    /tmp/aegis-tests-2y623ut5/aegis_config.json
   writable:    yes
   pywebview:   installed
   port 8000:   free
