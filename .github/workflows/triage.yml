@@ -1,0 +1,22 @@
+name: triage
+on: [push]
+jobs:
+  win:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements-dev.txt
+      - name: which tests fail on windows
+        shell: pwsh
+        env:
+          AEGIS_NO_GUI_ERRORS: "1"
+        run: |
+          python -m pytest -q --tb=short 2>&1 | Out-File -Encoding utf8 out.txt
+          Get-Content out.txt | Select-Object -Last 60 | ForEach-Object {
+            $line = $_ -replace '%','%25' -replace "`r",'' -replace "`n",'%0A'
+            Write-Host "::error::$line"
+          }
+          exit 0
