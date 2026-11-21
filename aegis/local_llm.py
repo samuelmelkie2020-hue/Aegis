@@ -197,22 +197,28 @@ def probe_hardware(timeout: float = HARDWARE_TIMEOUT) -> Hardware | None:
     the background, so by the time Settings is opened its answer is usually
     cached — the slow case costs one wait, never two.
     """
-    global _HARDWARE
     with _HARDWARE_LOCK:
         if _HARDWARE is not None:
             return _HARDWARE
 
-    result: list[Hardware] = []
-    worker = threading.Thread(
-        target=lambda: result.append(detect_hardware()), name="aegis-hardware", daemon=True
-    )
+    def probe_and_remember() -> None:
+        # Cache from *inside* the worker, so an abandoned probe still leaves its
+        # answer behind. Otherwise the slow case is paid twice: once at startup
+        # and again when Settings opens.
+        global _HARDWARE
+        try:
+            found = detect_hardware()
+        except Exception:  # pragma: no cover - detect_hardware is total
+            return
+        with _HARDWARE_LOCK:
+            _HARDWARE = found
+
+    worker = threading.Thread(target=probe_and_remember, name="aegis-hardware", daemon=True)
     worker.start()
     worker.join(timeout)
-    if not result:
-        return None
-    with _HARDWARE_LOCK:
-        _HARDWARE = result[0]
-    return result[0]
+    # Either it finished inside the budget, or it is still running and the answer
+    # is not ready: in both cases the cache is the single source of truth.
+    return cached_hardware()
 
 
 def cached_hardware() -> Hardware | None:

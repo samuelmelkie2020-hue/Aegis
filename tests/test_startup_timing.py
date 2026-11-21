@@ -39,27 +39,39 @@ def fresh_hardware_cache():
 # The bug: a slow probe must never be waited on
 # ---------------------------------------------------------------------------
 
-def test_a_hardware_probe_that_never_answers_cannot_hang_the_caller():
+# These assertions compare against a *simulated hang*, not against a tight
+# wall-clock budget: a loaded CI runner is many times slower than a laptop (this
+# suite takes 81 s on Windows CI versus 11 s locally), and a flaky timing test is
+# worse than no test. The fake probe sleeps far longer than the bound, so the
+# only way to fail is to actually wait for it.
+HANG_SECONDS = 20.0
+WAIT_BOUND = 6.0
+
+
+def test_a_hardware_probe_that_never_answers_cannot_hang_the_caller(monkeypatch):
     """The whole point: a stuck PowerShell must not hold the window closed."""
+    monkeypatch.setattr(local_llm, "detect_hardware", lambda: time.sleep(HANG_SECONDS))
     started = time.monotonic()
-    result = local_llm.probe_hardware(0.2)  # a real probe is much slower than this
+    result = local_llm.probe_hardware(0.2)
     elapsed = time.monotonic() - started
-    assert elapsed < 2.0, f"probe_hardware blocked for {elapsed:.1f}s"
-    if result is None:
-        # Nothing cached and the probe had not finished: that is the contract.
-        assert elapsed >= 0.2
+    assert result is None
+    assert elapsed < WAIT_BOUND, f"probe_hardware blocked for {elapsed:.1f}s"
 
 
 def test_a_slow_probe_is_abandoned_and_the_worker_keeps_going(monkeypatch):
     """Returning None quickly is right; killing the probe is not, because the
     answer is worth having by the time Settings opens."""
-    monkeypatch.setattr(local_llm, "detect_hardware", lambda: time.sleep(0.8) or _fake_hardware())
-    assert local_llm.probe_hardware(0.1) is None
-    time.sleep(1.0)  # let the abandoned thread finish
-    # The cache is filled from the abandoned probe's own call, not by re-probing.
-    assert local_llm.cached_hardware() is None or isinstance(
-        local_llm.cached_hardware(), local_llm.Hardware
-    )
+    def slow_but_real():
+        time.sleep(0.6)
+        return _fake_hardware()
+
+    monkeypatch.setattr(local_llm, "detect_hardware", slow_but_real)
+    assert local_llm.probe_hardware(0.05) is None, "it must not wait for a slow probe"
+    # The abandoned probe is not killed: its answer is what Settings shows.
+    deadline = time.monotonic() + WAIT_BOUND
+    while time.monotonic() < deadline and local_llm.cached_hardware() is None:
+        time.sleep(0.05)
+    assert isinstance(local_llm.cached_hardware(), local_llm.Hardware)
 
 
 def test_cached_hardware_never_starts_a_probe(monkeypatch):
@@ -95,16 +107,14 @@ def test_the_desktop_shell_does_not_wait_for_a_slow_adoption(monkeypatch, sandbo
     gives adoption a courtesy wait and then gets on with opening the window.
     """
     def slow_adopt(*args, **kwargs):
-        time.sleep(5)
+        time.sleep(HANG_SECONDS)
         return {"changed": False, "reason": "slow"}
 
     monkeypatch.setattr(local_llm, "adopt_local", slow_adopt)
     started = time.monotonic()
     desktop._adopt_local_model(timeout=0.3)
     elapsed = time.monotonic() - started
-    assert elapsed < 2.0, f"the shell waited {elapsed:.1f}s for a model server"
-    # and it really was on another thread, not a truncated call
-    assert elapsed >= 0.3
+    assert elapsed < WAIT_BOUND, f"the shell waited {elapsed:.1f}s for a model server"
 
 
 def test_adoption_probes_with_a_short_budget(monkeypatch, sandbox):
@@ -235,14 +245,19 @@ def test_adoption_is_bounded_and_offsets_the_window(monkeypatch):
     """The desktop shell must not wait for a model server indefinitely."""
     seen = {}
 
-    def slow(**kwargs):
+    finished = {"value": False}
+
+    def slow(*args, **kwargs):
         seen.update(kwargs)
-        time.sleep(0.05)
+        time.sleep(HANG_SECONDS)
+        finished["value"] = True
+        return {"changed": False, "reason": "slow"}
 
     monkeypatch.setattr(local_llm, "adopt_local", slow)
     started = time.monotonic()
     desktop._adopt_local_model(timeout=0.5)
-    assert time.monotonic() - started < 2.0
+    assert time.monotonic() - started < WAIT_BOUND
+    assert finished["value"] is False, "the shell waited for adoption to finish"
 
 
 # ---------------------------------------------------------------------------
