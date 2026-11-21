@@ -178,9 +178,12 @@ jobs:
         run: |
           set -euo pipefail
           tag="${GITHUB_REF_NAME}"
+          # NOTE: `gh release view --json digest` does not request that field, so
+          # it prints null for every asset on a perfectly good release. The REST
+          # endpoint does return it.
           for attempt in 1 2 3 4 5; do
-            gh release view "$tag" --repo "$GITHUB_REPOSITORY" \
-              --json assets --jq '.assets[] | "\(.name)\t\(.digest)"' > digests.txt
+            gh api "repos/$GITHUB_REPOSITORY/releases/tags/$tag" \
+              --jq '.assets[] | "\(.name)\t\(.digest)"' > digests.txt
             if [ "$(wc -l < digests.txt)" -gt 0 ] && ! grep -qv 'sha256:' digests.txt; then
               echo "--- all assets carry a digest ---"
               cat digests.txt
