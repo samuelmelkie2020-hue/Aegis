@@ -22,8 +22,9 @@ jobs:
           if (Test-Path $crash) { $out += "`n=== CRASH LOG ===`n" + (Get-Content $crash -Raw) }
           $out += "`n=== python -c import webview ===`n"
           $out += (python -c "import webview; print('ok', webview.__version__)" 2>&1 | Out-String)
-          foreach ($line in ($out -split "`r?`n")) {
-            $safe = $line -replace '%','%25'
-            Write-Host "::error::EXIT=$code | $safe"
-          }
+          # GitHub caps annotations at 10 per step, so pack everything into one.
+          $joined = (($out -split "`r?`n") | Where-Object { $_ -ne '' }) -join '%0A'
+          $joined = $joined -replace '%','%25' -replace "`r",''
+          if ($joined.Length -gt 60000) { $joined = $joined.Substring(0, 60000) }
+          Write-Host "::error::EXIT=$code%0A$joined"
           exit 0
