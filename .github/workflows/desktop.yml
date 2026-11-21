@@ -125,6 +125,79 @@ jobs:
             throw 'Binary ran from source instead of the frozen bundle'
           }
 
+      # The one thing no unit test can prove: that a real window opens on a real
+      # desktop. Runs the packaged binary as a normal user would, with a watchdog,
+      # and requires the app itself to say WINDOW CREATED. A screenshot is kept as
+      # evidence for the OS where grabbing one is trivial.
+      - name: Prove a real window opens (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        timeout-minutes: 5
+        env:
+          AEGIS_WINDOW_PROOF: "1"
+          AEGIS_WINDOW_PROOF_SECONDS: "8"
+        run: |
+          $p = Start-Process -FilePath dist\Aegis.exe -ArgumentList '--window-proof' -PassThru
+          if (-not $p.WaitForExit(90000)) { $p.Kill(); throw 'Aegis never exited: a window likely never opened' }
+          Write-Host "exit code: $($p.ExitCode)"
+          $log = Join-Path $env:APPDATA 'Aegis\aegis-startup.log'
+          Get-Content $log -Tail 15
+          if ($p.ExitCode -ne 0) { throw "window proof failed with exit code $($p.ExitCode)" }
+          if (-not (Select-String -Path $log -Pattern 'WINDOW CREATED')) { throw 'no WINDOW CREATED in the startup log' }
+          New-Item -ItemType Directory -Force -Path artifacts | Out-Null
+          Copy-Item $log artifacts\windows-startup.log
+          Add-Type -AssemblyName System.Windows.Forms, System.Drawing
+          $b = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+          $bmp = New-Object System.Drawing.Bitmap $b.Width, $b.Height
+          $g = [System.Drawing.Graphics]::FromImage($bmp)
+          $g.CopyFromScreen($b.Location, [System.Drawing.Point]::Empty, $b.Size)
+          $bmp.Save("$PWD\artifacts\windows-desktop.png")
+          Write-Host 'screenshot saved'
+
+      - name: Prove a real window opens (Linux)
+        if: runner.os == 'Linux'
+        timeout-minutes: 5
+        env:
+          AEGIS_WINDOW_PROOF: "1"
+          AEGIS_WINDOW_PROOF_SECONDS: "8"
+        run: |
+          sudo apt-get install -y imagemagick >/dev/null 2>&1 || true
+          mkdir -p artifacts
+          if xvfb-run -a ./dist/Aegis --window-proof; then code=0; else code=$?; fi
+          echo "exit code: $code"
+          tail -15 "$HOME/.config/Aegis/aegis-startup.log"
+          cp "$HOME/.config/Aegis/aegis-startup.log" artifacts/linux-startup.log
+          # Evidence, best effort: xwd/magick may not be present on the runner.
+          (xvfb-run -a --server-args="-screen 0 1280x900x24" import -window root artifacts/linux-desktop.png) || true
+          test "$code" -eq 0
+          grep -q "WINDOW CREATED" "$HOME/.config/Aegis/aegis-startup.log"
+
+      - name: Prove a real window opens (macOS)
+        if: runner.os == 'macOS'
+        timeout-minutes: 5
+        env:
+          AEGIS_WINDOW_PROOF: "1"
+          AEGIS_WINDOW_PROOF_SECONDS: "8"
+        run: |
+          mkdir -p artifacts
+          # A runner session has a window server, but not always an activated one;
+          # the app creates its window either way, which is what is asserted.
+          ./dist/Aegis.app/Contents/MacOS/Aegis --window-proof
+          echo "exit code: $?"
+          LOG="$HOME/Library/Application Support/Aegis/aegis-startup.log"
+          tail -15 "$LOG"
+          cp "$LOG" artifacts/macos-startup.log
+          screencapture -x artifacts/macos-desktop.png || true
+          grep -q "WINDOW CREATED" "$LOG"
+
+      - name: Upload window-proof evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: window-proof-${{ matrix.artifact }}
+          path: artifacts
+          if-no-files-found: warn
+
       - name: Upload self-check report
         if: always()
         uses: actions/upload-artifact@v4

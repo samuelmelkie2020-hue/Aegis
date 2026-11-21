@@ -425,12 +425,12 @@ def test_fatal_server_error_leaves_a_log_and_does_not_hang(monkeypatch, tmp_path
     assert [w["args"][0] for w in shown] in ([], ["Aegis could not start"])
 
 
-def test_webview_failure_is_reported_without_blocking(monkeypatch, tmp_path):
-    """The error window may itself fail; and no *modal* dialog is ever used.
+def test_webview_failure_falls_back_to_the_browser(monkeypatch, tmp_path):
+    """No native window is not a dead end.
 
-    A tkinter message box here would block a CI runner forever waiting for a
-    click, and can sit behind the project window on a desktop. Regression test:
-    this is exactly what hung the Windows build.
+    A missing/broken WebView2, a locked-down machine or an antivirus can all stop
+    the native window while the server is perfectly healthy. The user must end up
+    with a working app *and* a plain-language reason, not a process that exits.
     """
     import aegis.desktop as desktop
 
@@ -439,13 +439,68 @@ def test_webview_failure_is_reported_without_blocking(monkeypatch, tmp_path):
     monkeypatch.setitem(sys.modules, "tkinter", None)
     monkeypatch.setitem(sys.modules, "tkinter.messagebox", None)
     monkeypatch.setattr("aegis.config.DATA_DIR", tmp_path)
+    opened: list[str] = []
+    monkeypatch.setattr(desktop, "_open_in_browser", lambda url: opened.append(url) or True)
+    monkeypatch.setattr(desktop, "_keep_serving", lambda handle, **k: True)
 
-    assert desktop.run_desktop(port=0) == 1
+    assert desktop.run_desktop(port=0, keep_serving=False) == 0
 
     assert fake.windows[0]["title"] == "Aegis"
-    assert "no display" in (tmp_path / "aegis-crash.log").read_text(encoding="utf-8")
-    # The crash window is best-effort (it needs a display); the log is not.
-    assert [w["args"][0] for w in fake.windows[1:]] in ([], ["Aegis could not start"])
+    assert opened and opened[0].startswith("http://127.0.0.1:")
+    assert "?token=" in opened[0], "the browser tab needs the token handshake"
+    log = (tmp_path / "aegis-startup.log").read_text(encoding="utf-8")
+    assert "window FAILED" in log and "no display" in log
+    assert "using the browser instead" in log
+
+
+def test_with_no_browser_either_the_url_is_written_down(monkeypatch, tmp_path):
+    """The server is alive; the address must not be lost with the process."""
+    import aegis.desktop as desktop
+
+    fake = _RecordingWebview(start_error=RuntimeError("WebView2 missing"))
+    monkeypatch.setitem(sys.modules, "webview", fake)
+    monkeypatch.setattr("aegis.config.DATA_DIR", tmp_path)
+    monkeypatch.setattr(desktop, "_open_in_browser", lambda url: False)
+    monkeypatch.setattr(desktop, "_keep_serving", lambda handle, **k: True)
+
+    assert desktop.run_desktop(port=0, keep_serving=False) == 0
+    note = (tmp_path / "aegis-open-me.txt").read_text(encoding="utf-8")
+    assert "WebView2 missing" in note
+    assert "http://127.0.0.1:" in note and "?token=" in note
+
+
+def test_a_failing_page_bridge_cannot_stop_the_window(monkeypatch, tmp_path):
+    """Losing the JS bridge or the menu is a nuisance, not a broken app."""
+    import aegis.desktop as desktop
+
+    class _BadBridge(FakeWindow):
+        def expose(self, *funcs):
+            raise RuntimeError("inspect failed on a partially built window")
+
+        def load_url(self, url):
+            raise RuntimeError("window not ready")
+
+    class _Module(types.ModuleType):
+        def __init__(self):
+            super().__init__("webview")
+            self.windows = []
+
+        def create_window(self, *args, **kwargs):
+            self.windows.append(kwargs)
+            return _BadBridge()
+
+        def start(self, **kwargs):
+            pass
+
+    fake = _Module()
+    monkeypatch.setitem(sys.modules, "webview", fake)
+    monkeypatch.setattr("aegis.config.DATA_DIR", tmp_path)
+    opened: list[str] = []
+    monkeypatch.setattr(desktop, "_open_in_browser", lambda url: opened.append(url) or True)
+
+    # The window "opens" even though every optional step failed; no fallback.
+    assert desktop.run_desktop(port=0) == 0
+    assert opened == []
 
 
 def test_a_failing_error_window_still_leaves_a_log(monkeypatch, tmp_path):
@@ -464,9 +519,15 @@ def test_a_failing_error_window_still_leaves_a_log(monkeypatch, tmp_path):
 
     monkeypatch.setitem(sys.modules, "webview", _BrokenWebview())
     monkeypatch.setattr("aegis.config.DATA_DIR", tmp_path)
+    opened: list[str] = []
+    monkeypatch.setattr(desktop, "_open_in_browser", lambda url: opened.append(url) or True)
+    monkeypatch.setattr(desktop, "_keep_serving", lambda handle, **k: True)
 
-    assert desktop.run_desktop(port=0) == 1
-    assert "no backend" in (tmp_path / "aegis-crash.log").read_text(encoding="utf-8")
+    # Even when the window cannot be *constructed*, the app ends up somewhere
+    # usable — the same fallback that covers a window that fails to start.
+    assert desktop.run_desktop(port=0) == 0
+    assert opened and "?token=" in opened[0]
+    assert "no backend" in (tmp_path / "aegis-startup.log").read_text(encoding="utf-8")
 
 
 def test_error_window_cannot_block_forever(monkeypatch):
@@ -493,12 +554,13 @@ def test_headless_env_skips_the_error_window(monkeypatch, tmp_path):
     monkeypatch.setitem(sys.modules, "webview", fake)
     monkeypatch.setenv("AEGIS_NO_GUI_ERRORS", "1")
     monkeypatch.setattr("aegis.config.DATA_DIR", tmp_path)
+    monkeypatch.setattr(desktop, "_open_in_browser", lambda url: True)
 
-    assert desktop.run_desktop(port=0) == 1
+    # In CI the fallback still runs (the app must be reachable) but it never
+    # waits: AEGIS_NO_GUI_ERRORS turns the "keep serving" wait off.
+    assert desktop.run_desktop(port=0) == 0
     assert len(fake.windows) == 1                   # only the app window: no dialog...
-    assert "headless" in "".join(
-        (tmp_path / "aegis-crash.log").read_text(encoding="utf-8")  # ...but the reason was kept
-    )
+    assert "headless" in (tmp_path / "aegis-startup.log").read_text(encoding="utf-8")
 
 
 def test_error_page_escapes_the_message():
@@ -560,3 +622,28 @@ def test_self_check_flag_short_circuits(monkeypatch):
 
     monkeypatch.setattr("aegis.desktop.self_check", lambda: 0)
     assert runner.main(["--self-check"]) == 0
+
+
+def test_a_test_double_never_blocks_on_a_browser_fallback(monkeypatch, tmp_path):
+    """Regression: a fallback that waits can hang CI for the whole job.
+
+    `run_desktop()` defaults to not keeping the server alive, and the CI marker
+    forces it off, so no test — present or future — can accidentally wait on a
+    browser tab that nobody is going to close.
+    """
+    import aegis.desktop as desktop
+
+    fake = _RecordingWebview(start_error=RuntimeError("no window backend"))
+    monkeypatch.setitem(sys.modules, "webview", fake)
+    monkeypatch.setattr("aegis.config.DATA_DIR", tmp_path)
+    monkeypatch.setattr(desktop, "_open_in_browser", lambda url: True)
+    monkeypatch.setenv("AEGIS_NO_GUI_ERRORS", "1")  # as the build job sets it
+
+    import inspect
+
+    signature = inspect.signature(desktop.run_desktop)
+    assert signature.parameters["keep_serving"].default is False
+
+    started = __import__("time").monotonic()
+    assert desktop.run_desktop(port=0) == 0
+    assert __import__("time").monotonic() - started < 30
