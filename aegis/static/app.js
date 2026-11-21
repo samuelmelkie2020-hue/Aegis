@@ -628,6 +628,32 @@ document.querySelectorAll(".chip").forEach((chip) => {
   chip.addEventListener("click", () => sendMessage(chip.dataset.say));
 });
 
+// save the conversation: a plain markdown file, because it is a record the user
+// owns — readable in any editor, and not locked into this app.
+document.getElementById("exportChat").addEventListener("click", () => {
+  if (!state.history.length) {
+    toast("Nothing to save yet.");
+    return;
+  }
+  const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
+  const lines = state.history.map((m) => {
+    const who = m.role === "user" ? "You" : (state.settings.assistant_name || "Aegis");
+    return `### ${who}\n\n${m.content}\n`;
+  });
+  const body = `# ${state.settings.assistant_name || "Aegis"} — conversation\n\n` +
+    `_${new Date().toLocaleString()}_\n\n${lines.join("\n")}`;
+  const url = URL.createObjectURL(new Blob([body], { type: "text/markdown" }));
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `aegis-conversation-${stamp}.md`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  // The object URL holds the whole transcript; release it or it leaks.
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  toast("Conversation saved ✓");
+});
+
 // new conversation
 document.getElementById("clearChat").addEventListener("click", () => {
   state.history = [];

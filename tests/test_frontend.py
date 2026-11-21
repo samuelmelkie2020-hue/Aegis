@@ -467,3 +467,17 @@ def test_the_stopped_note_uses_markdown_this_app_actually_renders():
     js = (STATIC / "app.js").read_text(encoding="utf-8")
     assert "${note}" in js
     assert "_${note}_" not in js
+
+
+def test_a_conversation_can_be_saved_without_asking_the_server(html):
+    """Saving is a local export: the transcript never leaves the machine."""
+    assert 'id="exportChat"' in html
+    js = (STATIC / "app.js").read_text(encoding="utf-8")
+    export_fn = js[js.index('document.getElementById("exportChat")'):]
+    export_fn = export_fn[: export_fn.index("// new conversation")]
+    assert "text/markdown" in export_fn
+    assert "download =" in export_fn
+    # It must not post the transcript anywhere.
+    assert "/api/" not in export_fn
+    # And the object URL must be released, or the transcript leaks per export.
+    assert "revokeObjectURL" in export_fn

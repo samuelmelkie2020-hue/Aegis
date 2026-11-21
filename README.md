@@ -141,6 +141,8 @@ Paste your API key and **Save**. Use a **vision-capable model** so Aegis can see
 - **Type** in the chat box — Enter sends.
 - **🎙 Voice** — click the mic and speak (Chrome/Edge; it also reads replies aloud — toggle with *Speak replies*).
 - **Quick actions** — the chips on the left for common requests.
+- **💾 Save** — the icon next to 🧹 writes the conversation to a Markdown file
+  (`aegis-conversation-<time>.md`). It is a local download; nothing is uploaded.
 - **⏹ Stop** — while Aegis is answering, the Send button becomes **Stop** (or press
   `Esc`). The turn ends immediately: a half-written reply stays on screen and is
   marked as stopped, rather than arriving as an error a minute later. This works
@@ -305,7 +307,7 @@ Environment variables:
 
 ```bash
 pip install -r requirements-dev.txt   # runtime deps + pytest + ruff
-python -m pytest -q                   # 478 tests, ~14s, no display, no API key, no internet
+python -m pytest -q                   # 479 tests, ~14s, no display, no API key, no internet
 ruff check .                          # lint (config lives in pyproject.toml)
 python run.py --self-check            # diagnose a machine: data dir, server, webview
 node --check aegis/static/app.js      # front-end syntax
