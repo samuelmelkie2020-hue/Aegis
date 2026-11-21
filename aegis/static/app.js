@@ -484,7 +484,7 @@ async function sendMessage(text, opts = {}) {
                 ? "⏱ Stopped — that took longer than five minutes."
                 : "⏹ Stopped at your request.";
               if (!fullText) bubble.innerHTML = mdLite(note);
-              else bubble.innerHTML = mdLite(`${fullText}\n\n_${note}_`);
+              else bubble.innerHTML = mdLite(`${fullText}\n\n*${note}*`);
               bubble.classList.add("is-stopped");
               scrollBottom();
               break;
@@ -503,7 +503,11 @@ async function sendMessage(text, opts = {}) {
     statusPill.remove();
     bubble.innerHTML = mdLite(`⚠ Something went wrong: ${err.message || err}`);
   } finally {
-    if (!fullText) bubble.innerHTML = mdLite("(no response)");
+    // A stopped turn has already written its own ending; the fallback text would
+    // overwrite it with "(no response)".
+    if (!fullText && !bubble.classList.contains("is-stopped")) {
+      bubble.innerHTML = mdLite("(no response)");
+    }
     // Record the turn exactly once, and only after it is sent — the server
     // appends the message itself, so pushing it early duplicated every turn.
     if (!opts.hiddenUser) state.history.push({ role: "user", content: message });

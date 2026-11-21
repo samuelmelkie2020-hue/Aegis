@@ -448,3 +448,22 @@ def test_a_stopped_reply_is_not_rendered_as_a_failure():
     assert "is-stopped" in js
     css = (STATIC / "style.css").read_text(encoding="utf-8")
     assert ".is-stopped" in css
+
+
+def test_a_stopped_turn_is_not_overwritten_with_no_response():
+    """The `finally` fallback fired after a stop and replaced the note.
+
+    A stopped turn writes its own ending in the `done` handler; the fallback text
+    for an empty reply then overwrote it with "(no response)".
+    """
+    js = (STATIC / "app.js").read_text(encoding="utf-8")
+    finally_block = js[js.index("  } finally {"):]
+    finally_block = finally_block[: finally_block.index("setBusy(false)")]
+    assert "is-stopped" in finally_block
+
+
+def test_the_stopped_note_uses_markdown_this_app_actually_renders():
+    """mdLite handles *italics*, not _italics_ — the note showed its asterisks."""
+    js = (STATIC / "app.js").read_text(encoding="utf-8")
+    assert "${note}" in js
+    assert "_${note}_" not in js
