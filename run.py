@@ -58,6 +58,8 @@ def run_web(host: str, port: int, open_browser: bool) -> int:
         print("     (set AEGIS_HOST=127.0.0.1 to go back to this machine only)")
     print()
 
+    _adopt_local_model()
+
     if open_browser:
         target = unlock_url(port, host)
         health = f"http://localhost:{port}/api/health"
@@ -67,6 +69,21 @@ def run_web(host: str, port: int, open_browser: bool) -> int:
 
     uvicorn.run(app, host=host, port=port, log_level="info")
     return 0
+
+
+def _adopt_local_model() -> None:
+    """Use a model already on this PC, so the app works with no setup at all.
+
+    Best effort: a missing or slow local server must not delay or crash startup.
+    """
+    try:
+        from aegis.local_llm import adopt_local
+
+        result = adopt_local()
+        if result.get("changed"):
+            print(f"  ✓ {result.get('reason')} (no API key needed)")
+    except Exception:  # pragma: no cover - never block the app from starting
+        pass
 
 
 def main(argv: list[str] | None = None) -> int:

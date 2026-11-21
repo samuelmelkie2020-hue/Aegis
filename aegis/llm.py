@@ -380,13 +380,33 @@ def _clean_history(history: list[dict]) -> list[dict]:
 
 
 def _friendly_model_error(exc: Exception, llm_cfg: dict) -> str:
-    """Turn raw network/API errors into actionable, human guidance."""
+    """Turn raw network/API errors into actionable, human guidance.
+
+    A local endpoint never produces API-key advice: there is no key, so telling
+    the user to "re-copy your key" sends them looking for a field that does not
+    exist. For local servers the fixes are always about the local server.
+    """
+    from .local_llm import install_hint, is_local_url
+    from .local_llm import status as local_status
+
     base = (llm_cfg.get("base_url") or "").strip()
     host = base.split("//")[-1].split("/")[0] if base else "the AI provider"
     msg = str(exc)
     low = msg.lower()
+    local = is_local_url(base)
 
     m = re.search(r"LLM error (\d{3})", msg)
+    if m and local:
+        code = int(m.group(1))
+        model = (llm_cfg.get("model") or "").strip() or "the selected model"
+        if code == 404:
+            return (
+                f"⚠ The local server is running, but it does not have **{model}** (HTTP 404).\n\n"
+                "Open ⚙️ Settings → **Local model** and press **Download** next to a model, "
+                "or run `ollama pull llama3.2:3b` in a terminal, then press **🔌 Test connection**."
+            )
+        return f"⚠ Your local model server returned an error: {msg[:300]}"
+
     if m:
         code = int(m.group(1))
         if code in (401, 403):
@@ -405,6 +425,26 @@ def _friendly_model_error(exc: Exception, llm_cfg: dict) -> str:
             )
         return f"⚠ {host} returned an error: {msg[:300]}"
 
+    if local and any(
+        k in low
+        for k in ("ssl", "eof", "connection", "timed out", "timeout", "resolve", "refused", "reset", "network")
+    ):
+        running = ""
+        try:
+            found = local_status().get("running")
+        except Exception:  # pragma: no cover - diagnostics must never raise
+            found = None
+        running = (
+            "A local server *is* answering, so check that a model is selected."
+            if found
+            else f"Nothing is answering on {host}."
+        )
+        return (
+            f"⚠ **No local model is running** ({host}). {running}\n\n"
+            f"Fix it: {install_hint()}\n"
+            "Then press **🔌 Test connection** — there is no key to enter, it all runs on this PC."
+        )
+
     if any(k in low for k in ("ssl", "tls", "eof", "connection", "timed out", "timeout", "resolve", "refused", "reset", "proxy", "network")):
         return (
             f"⚠ **Can't reach {host} at all** — something on the network is blocking the connection. "
@@ -415,7 +455,7 @@ def _friendly_model_error(exc: Exception, llm_cfg: dict) -> str:
             "(if you're using the chat preview inside Arena instead of the app on your own PC, "
             "that preview is *always* blocked from AI sites — run Aegis on your PC instead).\n"
             "3. Use a VPN if your ISP blocks AI sites.\n"
-            "4. Or pick **Ollama (local)** — a free AI that runs offline, no internet needed."
+            "4. Or pick **Run on this PC** in Settings — a free AI that runs offline, no internet needed."
         )
     return f"⚠ I couldn't reach the AI model: {msg[:300]}"
 

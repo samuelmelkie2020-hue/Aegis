@@ -241,9 +241,12 @@ def test_frontend_never_hardcodes_localhost_api_calls():
         assert not call.startswith(("http://", "https://")), f"absolute API call: {call}"
         assert call.startswith("/"), f"non-relative API call: {call}"
 
-    # the only localhost literals allowed are provider presets
+    # The only localhost literals allowed are local provider presets. Those are
+    # handed to the backend as a base URL; the browser never fetches them itself.
     localhosts = re.findall(r'https?://(?:localhost|127\.0\.0\.1)[^"\']*', js)
-    assert all("11434" in url for url in localhosts), f"unexpected localhost URL: {localhosts}"
+    assert all("11434" in url or "1234" in url for url in localhosts), (
+        f"unexpected localhost URL: {localhosts}"
+    )
 
 
 def test_no_api_key_placeholder_is_prefilled():
@@ -307,3 +310,84 @@ def test_the_update_dot_respects_reduced_motion(html):
 def test_a_failed_update_is_shown_not_swallowed(html):
     js = (STATIC / "app.js").read_text(encoding="utf-8")
     assert 'showUpdate("failed"' in js
+
+
+# ---------------------------------------------------------------------------
+# The local-model panel: the default brain, with no key to type
+# ---------------------------------------------------------------------------
+
+def test_settings_shows_a_local_model_panel_first(html):
+    """The first thing in Settings is the thing that needs no account."""
+    assert 'id="localPanel"' in html
+    assert html.index('id="localPanel"') < html.index('id="setProvider"')
+    for element in ("localHint", "localCpu", "localRam", "localGpu", "localModels",
+                    "localSuggest", "localUse", "localRefresh", "localPull"):
+        assert f'id="{element}"' in html, f"missing {element}"
+
+
+def test_cloud_providers_are_collapsed_behind_a_summary(html):
+    """Cloud is optional now; it must not read like required setup."""
+    detail = html[html.index('id="cloudPanel"'):]
+    summary = detail[: detail.index("</summary>")]
+    assert "optional" in summary.lower()
+    assert "api key" in summary.lower()
+
+
+def test_the_local_provider_is_the_default_option(html):
+    """A new install must land on a working local setup, not a cloud one."""
+    select = re.search(r'<select id="setProvider">(.*?)</select>', html, re.S).group(1)
+    first = re.search(r'<option value="([^"]+)"', select).group(1)
+    assert first in ("ollama", "lmstudio")
+    js = (STATIC / "app.js").read_text(encoding="utf-8")
+    provider = js[js.index("const PROVIDERS"):]
+    provider = provider[: provider.index("};")]
+    ollama = provider[provider.index("ollama:"):]
+    assert "local: true" in ollama[:120]
+    assert "api.openai.com" not in ollama[: ollama.index("}")]
+
+
+def test_the_api_key_field_is_hidden_for_a_local_model(html):
+    """No key exists for a local model; showing the field invents a missing step."""
+    assert 'id="keyField"' in html
+    js = (STATIC / "app.js").read_text(encoding="utf-8")
+    assert "keyField.hidden = local" in js
+
+
+def test_the_panel_renders_progress_and_can_cancel(html):
+    js = (STATIC / "app.js").read_text(encoding="utf-8")
+    assert "/api/local/status" in js
+    assert "/api/local/pull" in js
+    assert "/api/local/pull/cancel" in js
+    assert 'id="pullFill"' in html
+    assert "renderPull" in js
+    status_fn = js[js.index("function renderPull"):]
+    status_fn = status_fn[: status_fn.index("async function loadLocalStatus")]
+    assert "pull.error" in status_fn          # an error is shown, not swallowed
+    assert '"cancelled"' in status_fn         # a cancelled download says so
+
+
+def test_a_missing_model_is_explained_on_first_run(html):
+    """The demo brain must not look like a finished install."""
+    js = (STATIC / "app.js").read_text(encoding="utf-8")
+    assert "demo brain" in js
+    assert "💻 This computer" in js
+    assert "No API key, no account" in js
+
+
+def test_the_status_line_says_where_the_model_runs(html):
+    js = (STATIC / "app.js").read_text(encoding="utf-8")
+    fn = js[js.index("function updateModelStatus"):]
+    fn = fn[: fn.index("// ---------------------------------------------------------------------------\n// Chat rendering")]
+    assert "on this PC" in fn
+    # a local endpoint with no model is still the demo brain, not "connected"
+    assert "local ? Boolean(llm.model)" in fn
+
+
+def test_the_local_panel_has_no_inline_styles(html):
+    """Styling belongs in style.css, which the reduced-motion rules also cover."""
+    panel = html[html.index('id="localPanel"'): html.index('id="cloudPanel"')]
+    assert "style=" not in panel
+    css = (STATIC / "style.css").read_text(encoding="utf-8")
+    assert ".local-panel" in css
+    assert ".pull-fill" in css
+    assert ".model-chip" in css

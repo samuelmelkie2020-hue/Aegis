@@ -84,6 +84,23 @@ class ServerHandle:
         return f"http://127.0.0.1:{self.port}"
 
 
+def _adopt_local_model() -> None:
+    """Pick up a model that is already installed on this PC, if any.
+
+    Runs before the window opens so the first greeting uses a real model instead
+    of the offline brain. Silent on failure — starting the app is more important
+    than detecting a model, and Settings has a Refresh button for the retry.
+    """
+    try:
+        from .local_llm import adopt_local
+
+        result = adopt_local()
+        if result.get("changed"):
+            log.info("Local model: %s", result.get("reason"))
+    except Exception:  # pragma: no cover - startup must not depend on this
+        log.debug("Local model detection skipped", exc_info=True)
+
+
 def start_server(port: int, *, log_level: str = "warning") -> ServerHandle:
     """Run uvicorn on loopback in a daemon thread and wait until it answers."""
     import uvicorn
@@ -593,6 +610,7 @@ def run_desktop(*, port: int | None = None, debug: bool = False) -> int:
     if chosen != preferred:
         log.warning("Port %s was busy; using %s instead", preferred, chosen)
 
+    _adopt_local_model()
     try:
         handle = start_server(chosen)
     except Exception as exc:

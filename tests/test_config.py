@@ -153,8 +153,16 @@ def test_masking_edges():
 def test_is_demo_mode_matches_a_missing_key():
     assert config.is_demo_mode({"llm": {"base_url": "https://api.openai.com/v1", "api_key": ""}})
     assert not config.is_demo_mode({"llm": {"base_url": "https://api.openai.com/v1", "api_key": "k"}})
-    # a local model needs no key
-    assert not config.is_demo_mode({"llm": {"base_url": "http://localhost:11434/v1", "api_key": ""}})
+    # a local model needs no key — but it does need a model name, otherwise the
+    # local server answers 404 and the user is told to check their API key.
+    assert config.is_demo_mode({"llm": {"base_url": "http://localhost:11434/v1", "api_key": ""}})
+    assert not config.is_demo_mode(
+        {"llm": {"base_url": "http://localhost:11434/v1", "api_key": "", "model": "llama3.2:3b"}}
+    )
+    # a key on a local endpoint is pointless but must not break anything
+    assert not config.is_demo_mode(
+        {"llm": {"base_url": "http://127.0.0.1:11434/v1", "api_key": "x", "model": "m"}}
+    )
 
 
 def test_is_demo_mode_survives_a_poisoned_mapping():
