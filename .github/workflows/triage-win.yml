@@ -24,9 +24,10 @@ jobs:
           AEGIS_NO_GUI_ERRORS: "1"
         run: |
           set +e
-          python -m pytest -q > pytest-out.txt 2>&1
-          echo "exit=$?"
-          Get-Content pytest-out.txt -Tail 40
+          $ErrorActionPreference = 'Continue'
+          cmd /c "python -m pytest -q > pytest-out.txt 2>&1"
+          Write-Host "exit=$LASTEXITCODE"
+          Get-Content pytest-out.txt -Tail 45
           python - <<'PY'
           import re
           from pathlib import Path
