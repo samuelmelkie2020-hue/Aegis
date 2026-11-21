@@ -19,13 +19,13 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements-dev.txt pyinstaller
-      - name: Pytest (collect the failure)
-        shell: bash
+      - name: Pytest exactly as the build job runs it
         env:
           AEGIS_NO_GUI_ERRORS: "1"
         run: |
           set +e
           python -m pytest -q > pytest-out.txt 2>&1
+          echo "exit=$?"
           set -e
           python - <<'PY'
           import re
