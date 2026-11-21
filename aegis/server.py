@@ -106,6 +106,12 @@ class TestRequest(BaseModel):
     settings: dict | None = None
 
 
+class LocalPullRequest(BaseModel):
+    """Only a model name: where to download from is the server's own config."""
+
+    model: str = ""
+
+
 # ---------------------------------------------------------------------------
 # Pages
 # ---------------------------------------------------------------------------
@@ -308,6 +314,13 @@ def test_connection(body: TestRequest) -> JSONResponse:
         return JSONResponse({"ok": False, "detail": "No API base URL set — pick a provider first."})
     host = base.split("//")[-1].split("/")[0]
 
+    # A local model has no key and no network: every cloud-flavoured message here
+    # would send the user looking for the wrong thing.
+    from . import local_llm
+
+    if local_llm.is_local_url(base):
+        return _test_local(base, host, model)
+
     try:
         r = httpx.post(
             base + "/chat/completions",
@@ -332,6 +345,60 @@ def test_connection(body: TestRequest) -> JSONResponse:
     if r.status_code == 429:
         return JSONResponse({"ok": False, "detail": f"⏳ Reached {host} — everything works, but rate-limited right now (HTTP 429). Try again in a moment."})
     return JSONResponse({"ok": False, "detail": f"⚠ Reached {host} but got HTTP {r.status_code}: {r.text[:160]} — check the base URL and model name."})
+
+
+def _test_local(base: str, host: str, model: str) -> JSONResponse:
+    """Test a local endpoint in local terms: is the server up, does it have the model."""
+    from . import local_llm
+
+    origin = local_llm.origin(base) or base
+    models, error = local_llm.list_models(origin)
+    if error and not models:
+        if not local_llm.port_open(origin):
+            return JSONResponse(
+                {
+                    "ok": False,
+                    "detail": (
+                        f"❌ Nothing is running on {host}, so there is no local model to talk to.\n"
+                        f"{local_llm.install_hint()}"
+                    ),
+                }
+            )
+        return JSONResponse(
+            {"ok": False, "detail": f"⚠ {host} is answering but did not list any models. {error}"}
+        )
+
+    if not model:
+        listing = ", ".join(models[:6]) if models else "none"
+        return JSONResponse(
+            {
+                "ok": False,
+                "detail": (
+                    f"⚠ {host} is running. Now choose a model — installed here: {listing}.\n"
+                    "Press ↻ Refresh in 💻 This computer to pick one."
+                ),
+            }
+        )
+    if model not in models:
+        listing = ", ".join(models[:6]) if models else "none"
+        return JSONResponse(
+            {
+                "ok": False,
+                "detail": (
+                    f"⚠ {host} is running, but <b>{model}</b> is not installed (installed: {listing}).\n"
+                    f"Download it from 💻 This computer, or run `ollama pull {model}`."
+                ),
+            }
+        )
+    return JSONResponse(
+        {
+            "ok": True,
+            "detail": (
+                f"✅ {model} is ready on this PC via {host} — no API key, nothing leaves your computer. "
+                "Aegis is ready!"
+            ),
+        }
+    )
 
 
 @app.get("/api/screenshot", dependencies=API)
@@ -370,6 +437,151 @@ def get_live_frame(fps: float = Query(default=2.0, ge=0.1, le=30)) -> Response:
             "X-Aegis-Tick": str(frame.get("tick", "")),
         },
     )
+
+
+# ---------------------------------------------------------------------------
+# Local model (the default brain: it runs on this PC)
+#
+# Nothing here touches the PC or an outside network, so it needs no approval:
+# probing a loopback port and reading a model list are read-only, and a pull
+# only ever goes to a server on this machine (enforced by is_local_url).
+# ---------------------------------------------------------------------------
+
+@app.get("/api/local/status", dependencies=API)
+def local_status() -> dict:
+    """Hardware, any local server that is running, its models, and what to get."""
+    from . import local_llm
+
+    cfg = load_config()
+    base = (cfg.get("llm") or {}).get("base_url") or ""
+    try:
+        report = local_llm.status(include=base)
+    except Exception as exc:  # a probe must never take the app down
+        log.warning("Local model probe failed", exc_info=True)
+        return {
+            "ok": False,
+            "detail": f"Could not check for a local model server ({str(exc)[:160]}).",
+            "running": False,
+            "installed": [],
+            "hint": local_llm.install_hint(),
+        }
+    report["ok"] = True
+    report.setdefault("hint", local_llm.install_hint())
+    report["active_model"] = (cfg.get("llm") or {}).get("model") or ""
+    report["servers"] = report.get("servers") or []
+    return report
+
+
+@app.post("/api/local/setup", dependencies=API)
+def local_setup() -> JSONResponse:
+    """One press: point Aegis at a local server and pick a model it can run.
+
+    This is the whole "no API key" story in one call — the user should never have
+    to type a URL, a model name, or find a key. If nothing is running, nothing is
+    saved and they get instructions instead.
+    """
+    from . import local_llm
+
+    cfg = load_config()
+    configured = (cfg.get("llm") or {}).get("base_url") or ""
+    try:
+        server = local_llm.detect_running(include=configured)
+    except Exception as exc:
+        log.warning("Local model detection failed", exc_info=True)
+        return JSONResponse(
+            {"ok": False, "detail": f"Could not check for a local model server ({str(exc)[:160]})."},
+            status_code=500,
+        )
+    if server is None:
+        return JSONResponse(
+            {
+                "ok": False,
+                "detail": (
+                    "No local AI server is running on this PC yet. "
+                    + local_llm.install_hint()
+                ),
+                "hint": local_llm.install_hint(),
+            },
+            status_code=409,
+        )
+
+    if not server.models:
+        # Recommending here would save a model name that is not downloaded yet,
+        # and the first chat would fail with a 404 the user cannot explain.
+        choice = local_llm.recommend(local_llm.detect_hardware(), [])
+        return JSONResponse(
+            {
+                "ok": False,
+                "detail": (
+                    f"{server.name} is running but has no models yet. "
+                    f"Recommended for this PC: {choice.get('model')} — "
+                    f"{choice.get('detail') or ''}"
+                ),
+                "recommendation": choice,
+                "server": server.name,
+            },
+            status_code=409,
+        )
+    choice = local_llm.recommend(local_llm.detect_hardware(), server.models)
+
+    try:
+        save_config(
+            {
+                "llm": {
+                    "base_url": local_llm.normalise_base(server.base_url),
+                    "model": choice["model"],
+                    "api_key": "",
+                }
+            }
+        )
+    except SettingsError as exc:
+        return JSONResponse({"ok": False, "detail": str(exc)}, status_code=400)
+
+    return JSONResponse(
+        {
+            "ok": True,
+            "detail": f"Using {choice['model']} on {server.name} — running on this PC.",
+            "settings": public_config(load_config()),
+            "model": choice["model"],
+            "server": server.name,
+        }
+    )
+
+
+@app.post("/api/local/pull", dependencies=API)
+def local_pull(body: LocalPullRequest) -> JSONResponse:
+    """Download a model onto this PC, in the background. Progress is polled."""
+    from . import local_llm
+
+    base = (load_config().get("llm") or {}).get("base_url") or ""
+    if not local_llm.is_local_url(base):
+        return JSONResponse(
+            {
+                "ok": False,
+                "detail": (
+                    "Aegis can only download models onto this computer, and the "
+                    "current provider is not a local one. Set the provider to "
+                    "“Run on this PC” first."
+                ),
+            },
+            status_code=409,
+        )
+    url = local_llm.origin(base)
+    if not url:
+        return JSONResponse(
+            {"ok": False, "detail": "Set the provider to “Run on this PC” first."},
+            status_code=409,
+        )
+    result = local_llm.start_pull(body.model, base_url=url)
+    return JSONResponse(result, status_code=200 if result.get("ok") else 409)
+
+
+@app.post("/api/local/pull/cancel", dependencies=API)
+def local_pull_cancel() -> JSONResponse:
+    from . import local_llm
+
+    result = local_llm.cancel_pull()
+    return JSONResponse(result, status_code=200 if result.get("ok") else 409)
 
 
 # ---------------------------------------------------------------------------

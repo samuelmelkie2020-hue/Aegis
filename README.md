@@ -19,9 +19,10 @@ Ask it in plain English (or by voice) and it will look at your screen, run comma
 | 📂 **File assistant** | Lists, reads, writes and searches files |
 | 🖥 **System monitor** | CPU, memory, disk, battery, uptime, top processes |
 | 🎙 **Voice in, voice out** | Talk to it (browser speech recognition), it talks back (TTS) |
-| 🧠 **Bring your own brain** | Works with OpenAI, Gemini, Groq, OpenRouter — or fully local **Ollama** |
+| 🧠 **Runs on your PC** | The AI model lives on your computer (**Ollama** / LM Studio). No API key, no account, nothing leaves the machine |
+| 📦 **Installs its own model** | Aegis checks your CPU, RAM and GPU, recommends a model that fits, and downloads it from inside the app |
 | 🛡 **Safe mode** | Asks your approval before touching your PC (on by default) |
-| 🤖 **Demo brain** | Works instantly with *no* API key for basic commands |
+| 🔌 **Cloud is optional** | OpenAI, Gemini, Groq and OpenRouter still work if you prefer — your choice, never required |
 
 ---
 
@@ -86,9 +87,30 @@ The web UI is the same app, and it is still handy for LAN use (see [Safety](#-sa
 
 ---
 
-## 🧠 Connect a real AI model (30 seconds)
+## 🧠 Connect a real AI model (no key, ~5 minutes)
 
-Click **⚙️ Settings** in the app and fill in any OpenAI-compatible provider:
+**Aegis runs the AI on your own computer.** There is no sign-up, no API key, and
+no bill. The model reads your screen and answers locally — nothing is uploaded.
+
+1. **Install a local model server** — [Ollama](https://ollama.com/download) is the
+   easiest (one installer, Windows/macOS/Linux). LM Studio and llama.cpp also work.
+2. **Open Aegis → ⚙️ Settings → 💻 This computer.** It shows your CPU, memory and
+   graphics card, and what it recommends for that machine:
+   - ~8 GB of RAM → `qwen2.5vl:3b` (about 3 GB)
+   - 16 GB or a modest GPU → `qwen2.5vl:7b` or `llava:7b`
+   - very little memory → `moondream` (about 1.7 GB)
+3. Press **Download** (or **Use this model**). Progress is shown in the panel and
+   can be cancelled. When it finishes, press **Save settings**.
+
+That's it — Aegis now thinks on your PC. Vision models (the ones marked 👁) can
+also *see* your screen; a text-only model works too, just without the eyes.
+
+If a model is already installed, Aegis finds it at startup and uses it — no setup
+at all. The default provider is `http://127.0.0.1:11434/v1` with no key.
+
+### Cloud is still optional
+
+Pick a provider under *Use a cloud provider instead* if you prefer one:
 
 | Provider | API base URL | Example model |
 |---|---|---|
@@ -96,9 +118,14 @@ Click **⚙️ Settings** in the app and fill in any OpenAI-compatible provider:
 | **Google Gemini** | `https://generativelanguage.googleapis.com/v1beta/openai/` | `gemini-2.0-flash` |
 | **Groq** | `https://api.groq.com/openai/v1` | `llama-3.3-70b-versatile` |
 | **OpenRouter** | `https://openrouter.ai/api/v1` | `openai/gpt-4o-mini` |
-| **Ollama (local, free)** | `http://localhost:11434/v1` | `llama3.2-vision` |
+| **Ollama / LM Studio** | `http://127.0.0.1:11434/v1` · `http://127.0.0.1:1234/v1` | any installed model |
 
 Paste your API key and **Save**. Use a **vision-capable model** so Aegis can see your screen.
+
+> 🔒 **Nothing labelled "on this PC" ever leaves the machine.** Aegis only treats
+> an address as local when it is loopback (`127.0.0.1`, `localhost`, `::1`) — a LAN
+> IP or a lookalike hostname is rejected, so a "local" provider cannot silently
+> upload a screenshot. A model download is only ever aimed at a local server.
 
 > 🔑 Your key is stored only on your machine — `aegis_config.json` in the app's data folder (**Windows** `%APPDATA%\Aegis`, **macOS** `~/Library/Application Support/Aegis`, **Linux** `~/.config/Aegis`; the repo folder when running from source — override with `AEGIS_DATA_DIR`) (git-ignored, `chmod 600`) and is never sent back to the browser.
 
@@ -172,6 +199,7 @@ one, and the helper's log is at `<data dir>/update/update.log` (or
 - **Localhost only by default.** The server binds to `127.0.0.1`, so it is not reachable from your network.
 - **Every `/api` call needs an access token.** Aegis runs commands and reads files, so the API is not open. A random token is generated on first run and stored in `.aegis_token` (next to your config, `chmod 600`). The desktop window loads `http://127.0.0.1:<port>/?token=…` once and the page trades it for an HttpOnly session cookie; in `--web` mode the terminal prints that URL for you to open.
 - **Your API key never leaves the server.** The Settings dialog shows only whether a key is saved, plus a masked hint (`sk-…1234`). Leaving the key field blank keeps the saved key; tick **Forget the saved key** to delete it.
+- **A local model has no key and no network.** `local` is derived from the base URL on the server (loopback only) and is never trusted from the client, so a cloud endpoint cannot pretend to be local — and a "local" provider cannot point at a LAN machine.
 - **Live view is opt-in and limits itself.** Off by default, token-gated, capped at 4 fps **by the server** rather than the page, stopped when the tab goes to the background, and ended after 30 minutes. The panel shows a red **Live** badge that turns amber **Stalled** if frames stop arriving — the badge never claims to be watching a screen it is not reading.
 - Requests whose `Host` header is not this machine are rejected, which blocks DNS-rebinding attacks from a web page you happen to visit.
 
@@ -236,7 +264,7 @@ Environment variables:
 
 ```bash
 pip install -r requirements-dev.txt   # runtime deps + pytest + ruff
-python -m pytest -q                   # 342 tests, ~3s, no display or API key needed
+python -m pytest -q                   # 414 tests, ~9s, no display, no API key, no internet
 ruff check .                          # lint (config lives in pyproject.toml)
 python run.py --self-check            # diagnose a machine: data dir, server, webview
 node --check aegis/static/app.js      # front-end syntax
@@ -338,7 +366,13 @@ after 30 minutes, and treats a gap of 2 minutes as a new run. `503` carries a JS
 
 `: ping` comment lines are sent every 15 s so proxies do not drop a stream during a slow model call.
 
-Without an API key, a built-in **demo brain** handles simple intents so you can try everything right away.
+The brain is a **local model** by default (`aegis/local_llm.py`): at startup Aegis
+probes `127.0.0.1:11434` (Ollama), `:1234` (LM Studio) and `:8080` (llama.cpp), and
+if a model is already installed it wires itself up — no key, no config file to edit.
+
+Without any local model, a built-in **demo brain** handles simple intents so you can
+try everything right away, and the app tells you exactly how to fix that rather
+than asking for an API key.
 
 ---
 
@@ -360,10 +394,11 @@ Without an API key, a built-in **demo brain** handles simple intents so you can 
 | Problem | Fix |
 |---|---|
 | *"Could not open requirements file"* | You are not in the `aegis` folder — run `cd aegis` first, or use **start.bat** (it handles everything). |
-| *"TLS/SSL connection has been closed"* / can't reach the AI model | Your network is blocking the AI provider (not your key). Press **🔌 Test connection** in Settings; try another Provider, a VPN, or Ollama (local). If you're chatting inside the Arena **preview**: that sandbox is always blocked from AI sites — run Aegis on your own PC. |
+| *"TLS/SSL connection has been closed"* / can't reach a **cloud** provider | Your network is blocking it (not your key). Press **🔌 Test connection** in Settings, try another Provider or a VPN — or switch to **💻 Run on this PC**, which needs no network at all. If you're chatting inside the Arena **preview**: that sandbox is always blocked from AI sites, so local is the only option there. |
 | "Screen capture unavailable" | Run it on a machine with a real display; on macOS grant Screen Recording permission. |
 | Mic button says unsupported | Voice input needs Chrome or Edge (Web Speech API). |
-| "I couldn't reach the AI model" | Check base URL / key / model in ⚙️ Settings. Ollama users: make sure `ollama serve` is running and you `ollama pull llama3.2-vision`. |
+| "No local model is running" | Aegis looks for Ollama on `127.0.0.1:11434`. Start Ollama (open the app, or run `ollama serve`), then ⚙️ Settings → 💻 This computer → **↻ Refresh**. |
+| "…does not have *model* (HTTP 404)" | The server is running but that model is not downloaded. Use **Download** in ⚙️ Settings → 💻 This computer, or `ollama pull <model>`. |
 | Aegis acts but nothing types | Focus the window you want to type into — typing goes to whatever is focused. |
 | Update says "cannot verify" / "does not match the checksum" | The download was corrupted or intercepted. It was deleted, not installed. Try again; if it repeats, download the release manually. |
 | Update says it cannot write to the app folder | Aegis lives in a folder you do not own (e.g. `C:\Program Files`). Move the `Aegis` folder to Downloads or Desktop and update again. |

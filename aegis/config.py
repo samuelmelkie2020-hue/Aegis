@@ -70,15 +70,18 @@ CONFIG_PATH = Path(
 DEFAULTS: dict[str, Any] = {
     "assistant_name": "Aegis",
     "llm": {
-        # Any OpenAI-compatible endpoint works:
-        #   OpenAI     -> https://api.openai.com/v1        (model: gpt-4o-mini / gpt-4o)
+        # Default: a model on THIS computer. No API key, no account, nothing
+        # leaves the PC. `python run.py` (or the app) sets this to whichever local
+        # server it finds; see aegis/local_llm.py.
+        # Other OpenAI-compatible endpoints still work if you add one:
+        #   OpenAI     -> https://api.openai.com/v1        (model: gpt-4o-mini)
         #   OpenRouter -> https://openrouter.ai/api/v1
         #   Groq       -> https://api.groq.com/openai/v1
         #   Gemini     -> https://generativelanguage.googleapis.com/v1beta/openai/
-        #   Ollama     -> http://localhost:11434/v1        (no key needed, model: llama3.2-vision)
-        "base_url": "https://api.openai.com/v1",
+        "base_url": "http://127.0.0.1:11434/v1",
         "api_key": "",
-        "model": "gpt-4o-mini",
+        "model": "",
+        "local": True,
     },
     # When True, Aegis asks for your approval before acting on the PC
     # (running commands, typing, clicking, opening apps, writing files).
@@ -119,14 +122,28 @@ def _as_bool(value: Any, name: str, *, default: bool) -> bool:
 
 def _validate_llm(raw: Any, base: dict[str, Any]) -> dict[str, Any]:
     if raw is None:
-        return dict(base)
+        return _with_locality(dict(base))
     if not isinstance(raw, dict):
         raise SettingsError("llm must be an object with base_url / api_key / model")
     out = dict(base)
     for key in CLIENT_WRITABLE_LLM:
         if key in raw:
             out[key] = _as_str(raw[key], f"llm.{key}")
-    return out
+    return _with_locality(out)
+
+
+def _with_locality(llm: dict[str, Any]) -> dict[str, Any]:
+    """Derive ``local`` from the URL instead of trusting it.
+
+    A client that could set ``local: true`` on a public endpoint would get the UI
+    to claim "runs on your PC" while screenshots went to a server. The flag is
+    therefore always recomputed here, and nothing else may set it.
+    """
+    from .local_llm import is_local_url
+
+    llm = dict(llm)
+    llm["local"] = is_local_url(llm.get("base_url") or "")
+    return llm
 
 
 def _validate(raw: dict[str, Any], base: dict[str, Any]) -> dict[str, Any]:
@@ -355,6 +372,9 @@ def public_config(cfg: dict[str, Any]) -> dict[str, Any]:
             "model": llm.get("model") or "",
             "api_key_set": bool(key),
             "api_key_masked": mask_key(key),
+            # True = the model runs on this PC. Derived from the URL, never
+            # stored, so the UI cannot be told something untrue.
+            "local": bool(llm.get("local")),
         },
     }
 
@@ -365,10 +385,18 @@ def has_api_key(cfg: dict[str, Any]) -> bool:
 
 
 def is_demo_mode(cfg: dict[str, Any]) -> bool:
-    """True when no real LLM is reachable: no key on a remote endpoint."""
+    """True when no real model is configured, so the offline brain answers.
+
+    A local endpoint counts only once a model ("") is chosen: pointing at a local
+    server with no model name produces a confusing 404 from that server, which
+    the user cannot act on. Until then, the demo brain is the honest default.
+    """
+    from .local_llm import is_local_url
+
     llm = cfg.get("llm")
     if not isinstance(llm, dict):
         return True
-    base = (llm.get("base_url") or "").lower()
-    local = "localhost" in base or "127.0.0.1" in base
-    return not llm.get("api_key") and not local
+    base = llm.get("base_url") or ""
+    if is_local_url(base):
+        return not (llm.get("model") or "").strip()
+    return not llm.get("api_key")

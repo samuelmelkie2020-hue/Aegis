@@ -43,6 +43,24 @@ const setModel = document.getElementById("setModel");
 const clearApiKeyEl = document.getElementById("clearApiKey");
 const keyState = document.getElementById("keyState");
 
+const localPanel = document.getElementById("localPanel");
+const localHint = document.getElementById("localHint");
+const localSpecs = document.getElementById("localSpecs");
+const localCpu = document.getElementById("localCpu");
+const localRam = document.getElementById("localRam");
+const localGpu = document.getElementById("localGpu");
+const localModels = document.getElementById("localModels");
+const localSuggest = document.getElementById("localSuggest");
+const localSuggestText = document.getElementById("localSuggestText");
+const localUse = document.getElementById("localUse");
+const localRefresh = document.getElementById("localRefresh");
+const localPull = document.getElementById("localPull");
+const pullFill = document.getElementById("pullFill");
+const pullText = document.getElementById("pullText");
+const pullCancel = document.getElementById("pullCancel");
+const cloudPanel = document.getElementById("cloudPanel");
+const keyField = document.getElementById("keyField");
+
 const heroTemplate = (document.getElementById("welcomeHero") || {}).outerHTML || "";
 
 // ---------------------------------------------------------------------------
@@ -156,11 +174,17 @@ function toast(msg) {
 
 function updateModelStatus(cfg) {
   const llm = cfg.llm || {};
-  const hasBrain = Boolean(llm.api_key_set) || /localhost|127\.0\.0\.1/.test(llm.base_url || "");
+  const local = isLocalBase(llm.base_url);
+  // A local endpoint is only "connected" once a model is chosen; without one the
+  // server answers 404 and the honest label is still "demo brain".
+  const hasBrain = local ? Boolean(llm.model) : Boolean(llm.api_key_set);
+  const label = local
+    ? `💻 ${llm.model || "set up a model"} — on this PC`
+    : `${llm.model || "AI"} connected`;
   modelDot.classList.toggle("live", hasBrain);
-  modelStatus.textContent = hasBrain ? `${llm.model || "AI"} connected` : "Demo brain";
+  modelStatus.textContent = hasBrain ? label : "Demo brain";
   document.querySelector(".brand-sub").textContent =
-    hasBrain ? `Aegis · ${llm.model || "AI"} connected` : "Aegis · demo brain";
+    hasBrain ? `Aegis · ${label}` : "Aegis · demo brain";
 }
 
 // ---------------------------------------------------------------------------
@@ -819,14 +843,23 @@ async function refreshUpdateState() {
 // ---------------------------------------------------------------------------
 // Settings
 // ---------------------------------------------------------------------------
+// "local" providers need no key and never leave this machine. Their model names
+// are NOT guessed: the local panel lists what is actually installed and the
+// server rejects nothing, so a wrong name only ever shows up as a 404.
 const PROVIDERS = {
+  ollama:     { base: "http://127.0.0.1:11434/v1", model: "", local: true },
+  lmstudio:   { base: "http://127.0.0.1:1234/v1", model: "", local: true },
   openrouter: { base: "https://openrouter.ai/api/v1", model: "openai/gpt-4o-mini" },
   openai:     { base: "https://api.openai.com/v1", model: "gpt-4o-mini" },
   gemini:     { base: "https://generativelanguage.googleapis.com/v1beta/openai/", model: "gemini-2.0-flash" },
   groq:       { base: "https://api.groq.com/openai/v1", model: "llama-3.3-70b-versatile" },
-  ollama:     { base: "http://localhost:11434/v1", model: "llama3.2-vision" },
   custom:     { base: "", model: "" },
 };
+const LOCAL_BASE = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?(\/|$)/i;
+
+function isLocalBase(url) {
+  return LOCAL_BASE.test((url || "").trim());
+}
 const KNOWN_MODELS = Object.values(PROVIDERS).map((p) => p.model).filter(Boolean);
 
 function inferProvider(baseUrl) {
@@ -841,7 +874,11 @@ setProvider.addEventListener("change", () => {
   const p = PROVIDERS[setProvider.value];
   if (!p) return;
   if (setProvider.value !== "custom") setBaseUrl.value = p.base;
-  if (!setModel.value.trim() || KNOWN_MODELS.includes(setModel.value.trim())) setModel.value = p.model;
+  if (!p.local && (!setModel.value.trim() || KNOWN_MODELS.includes(setModel.value.trim()))) {
+    setModel.value = p.model;
+  }
+  syncLocalVisibility();
+  if (p.local) loadLocalStatus();
 });
 
 // show / hide the API key
@@ -867,6 +904,180 @@ function applyConfig(cfg) {
     ? `A key is saved (${cfg.llm.api_key_masked}). Leave the field empty to keep it.`
     : "No key saved yet.";
   updateModelStatus(cfg);
+  syncLocalVisibility();
+}
+
+// A local brain has no key, so hide the field rather than let someone think
+// they are missing one. The cloud section stays collapsed unless it is in use.
+function syncLocalVisibility() {
+  const local = isLocalBase(setBaseUrl.value);
+  if (keyField) keyField.hidden = local;
+  if (cloudPanel) cloudPanel.open = !local;
+}
+
+// ---------------------------------------------------------------------------
+// Local model panel
+// ---------------------------------------------------------------------------
+// Everything here talks to /api/local/*: the server probes the PC, so the page
+// never has to (and cannot) reach localhost itself from a browser sandbox.
+let localPoll = null;
+
+function fmtGb(n) {
+  return n ? `${Number(n).toFixed(1)} GB` : "unknown";
+}
+
+function renderLocal(data) {
+  if (!data) return;
+  const hw = data.hardware || {};
+  localCpu.textContent = hw.cpu || "unknown";
+  localRam.textContent = hw.ram_gb ? `${fmtGb(hw.ram_gb)}${hw.gpu ? "" : " · no GPU"}` : "unknown";
+  localGpu.textContent = hw.gpu
+    ? `${hw.gpu}${hw.vram_gb ? ` · ${fmtGb(hw.vram_gb)}` : ""}`
+    : "built-in graphics";
+  localSpecs.hidden = false;
+
+  const running = (data.servers || []).filter((s) => s.reachable);
+  const installed = data.installed || [];
+
+  localHint.className = "local-hint";
+  if (running.length) {
+    const names = running.map((s) => s.name).join(", ");
+    localHint.textContent = installed.length
+      ? `✅ ${names} is running on this PC — ${installed.length} model${installed.length === 1 ? "" : "s"} ready. Nothing leaves this computer.`
+      : `✅ ${names} is running, but no model is downloaded yet. Pick one below.`;
+    localHint.classList.add("ok");
+  } else if (data.hint) {
+    localHint.textContent = `No AI server found on this PC yet. ${data.hint}`;
+    localHint.classList.add("warn");
+  } else {
+    localHint.textContent = "No AI server found on this PC yet.";
+    localHint.classList.add("warn");
+  }
+
+  // Installed models, clickable.
+  localModels.innerHTML = "";
+  if (installed.length) {
+    localModels.hidden = false;
+    for (const name of installed) {
+      const chip = document.createElement("button");
+      chip.type = "button";
+      chip.className = "model-chip";
+      if (name === (state.settings.llm?.model || "")) chip.classList.add("active");
+      const vision = /vl|llava|vision|moondream|gemma3|minicpm/i.test(name);
+      chip.innerHTML = `${esc(name)}${vision ? ' <span class="eyes" title="can see your screen">👁</span>' : ""}`;
+      chip.title = vision ? "Can see your screen" : "Text only — no screenshots";
+      chip.addEventListener("click", () => {
+        setModel.value = name;
+        toast(`Model set to ${name} — press Save settings`);
+      });
+      localModels.appendChild(chip);
+    }
+  } else {
+    localModels.hidden = true;
+  }
+
+  // What to download, and its size, before anything starts.
+  const rec = data.recommendation || {};
+  if (rec.model && !rec.installed) {
+    localSuggest.hidden = false;
+    localSuggestText.innerHTML = `Recommended for this PC: <b>${esc(rec.model)}</b> — ${esc(rec.detail || "")}`;
+    localUse.dataset.model = rec.model;
+    localUse.disabled = Boolean(data.pull?.running);
+  } else {
+    localSuggest.hidden = true;
+  }
+
+  renderPull(data.pull || {});
+}
+
+function renderPull(pull) {
+  const running = Boolean(pull.running);
+  localPull.hidden = !running && !pull.error && !pull.status;
+  if (!localPull.hidden) {
+    const total = Number(pull.total) || 0;
+    const done = Number(pull.completed) || 0;
+    const pct = total ? Math.min(100, Math.round((done / total) * 100)) : 0;
+    pullFill.style.width = `${pct}%`;
+    pullText.className = "pull-text";
+    if (pull.error) {
+      pullText.classList.add("error");
+      pullText.textContent = `⚠ ${pull.error}`;
+    } else if (running) {
+      pullText.textContent = `Downloading ${pull.model} — ${pct}%${total ? ` (${fmtGb(done / 1e9)} of ${fmtGb(total / 1e9)})` : ""} · ${pull.status || "starting"}`;
+    } else if (pull.status === "done") {
+      pullText.textContent = `✅ ${pull.model} is ready. Press Refresh, then choose it.`;
+      pullFill.style.width = "100%";
+    } else if (pull.status === "cancelled") {
+      pullText.textContent = "Download cancelled — nothing was installed.";
+    }
+  }
+  pullCancel.hidden = !running;
+  localUse.disabled = running;
+  if (running && !localPoll) {
+    localPoll = setInterval(() => loadLocalStatus({ quiet: true }), 1500);
+  } else if (!running && localPoll) {
+    clearInterval(localPoll);
+    localPoll = null;
+  }
+}
+
+async function loadLocalStatus(opts = {}) {
+  if (!localPanel) return;
+  if (!opts.quiet) {
+    localHint.className = "local-hint";
+    localHint.textContent = "Checking this PC…";
+  }
+  try {
+    const res = await api("/api/local/status");
+    const data = await res.json();
+    if (data && data.ok === false) {
+      localHint.className = "local-hint warn";
+      localHint.textContent = data.detail || "Could not check for a local AI server.";
+      return;
+    }
+    renderLocal(data);
+  } catch (err) {
+    localHint.className = "local-hint warn";
+    localHint.textContent = `Could not check for a local AI server (${err.message || err}).`;
+  }
+}
+
+if (localRefresh) localRefresh.addEventListener("click", () => loadLocalStatus());
+
+if (localUse) {
+  localUse.addEventListener("click", async () => {
+    const model = localUse.dataset.model;
+    if (!model) return;
+    localUse.disabled = true;
+    localUse.textContent = "Starting…";
+    try {
+      const res = await api("/api/local/pull", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ model }),
+      });
+      const data = await res.json();
+      if (!res.ok || data.ok === false) throw new Error(data.detail || `server ${res.status}`);
+      toast(`Downloading ${model}…`);
+      loadLocalStatus({ quiet: true });
+    } catch (err) {
+      pullText.className = "pull-text error";
+      pullText.textContent = `⚠ ${err.message || err}`;
+      localPull.hidden = false;
+    } finally {
+      localUse.textContent = "Use this model";
+      localUse.disabled = false;
+    }
+  });
+}
+
+if (pullCancel) {
+  pullCancel.addEventListener("click", async () => {
+    try {
+      await api("/api/local/pull/cancel", { method: "POST" });
+      toast("Stopping the download…");
+    } catch { /* the poll will show it stopped */ }
+  });
 }
 
 async function loadSettings() {
@@ -892,6 +1103,9 @@ let lastFocused = null;
 function openSettings() {
   lastFocused = document.activeElement;
   settingsModal.classList.remove("hidden");
+  // Probe lazily: the check costs a couple of seconds, and nothing on the first
+  // screen needs it. Also re-probes, because the user may have just started Ollama.
+  loadLocalStatus();
   const first = settingsModal.querySelector(FOCUSABLE);
   if (first) first.focus();
 }
@@ -954,11 +1168,20 @@ saveSettings.addEventListener("click", async () => {
     if (saved.ok === false) throw new Error(saved.detail || "rejected by the server");
     applyConfig(saved);
     toast("Settings saved ✓");
-    addMessage("assistant", `⚙️ Settings saved. I'm <b>${esc(state.settings.assistant_name)}</b>${
-      (state.settings.llm?.api_key_set || state.settings.llm?.base_url?.includes("localhost"))
-        ? ` and I'm thinking with <code>${esc(state.settings.llm.model)}</code>.`
-        : " and my demo brain is active — add an API key in Settings to unlock full intelligence."
-    }`);
+    const now = state.settings.llm || {};
+    const onThisPc = isLocalBase(now.base_url);
+    const ready = onThisPc ? Boolean(now.model) : Boolean(now.api_key_set);
+    let line;
+    if (ready && onThisPc) {
+      line = ` and I'm thinking with <code>${esc(now.model)}</code> — running on this PC, nothing leaves it.`;
+    } else if (ready) {
+      line = ` and I'm thinking with <code>${esc(now.model)}</code>.`;
+    } else if (onThisPc) {
+      line = " and my demo brain is active — pick a model in ⚙️ Settings → 💻 This computer to finish setup.";
+    } else {
+      line = " and my demo brain is active — add an API key in Settings, or switch to 💻 Run on this PC.";
+    }
+    addMessage("assistant", `⚙️ Settings saved. I'm <b>${esc(state.settings.assistant_name)}</b>${line}`);
   } catch (err) {
     toast("Could not save settings");
     addMessage("assistant", `⚠ Could not save settings: ${err.message || err}`);
@@ -1190,7 +1413,19 @@ setInterval(refreshStats, 3000);
 // ---------------------------------------------------------------------------
 // Boot
 // ---------------------------------------------------------------------------
-loadSettings();
+loadSettings().then(() => {
+  // First run on a machine with no model: say what to do instead of leaving the
+  // user to guess. Only once per load, and only while the demo brain is active.
+  const llm = state.settings.llm || {};
+  if (isLocalBase(llm.base_url) && !llm.model) {
+    addMessage(
+      "assistant",
+      "🛡 I'm running on the <b>demo brain</b> — I answer without any AI model, so my replies are limited.\n" +
+        "To wake up the real brain, open <b>⚙️ Settings → 💻 This computer</b>: it checks your PC and offers " +
+        "the best model it can run, then downloads it. <b>No API key, no account, nothing leaves your computer.</b>"
+    );
+  }
+});
 refreshScreenImage();
 
 // The version comes from the server, so the footer cannot claim a build that
@@ -1203,7 +1438,7 @@ api("/api/health")
   .then((info) => {
     const foot = document.getElementById("footNote");
     if (info && info.version && foot) {
-      foot.textContent = `v${info.version} · local-first · your key stays on this PC`;
+      foot.textContent = `v${info.version} · runs on this PC · nothing leaves it`;
     }
   })
   .catch(() => { /* the static text is fine */ });

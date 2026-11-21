@@ -55,6 +55,9 @@ hiddenimports = [
     "webview",
     "webview.platforms",
     "aegis.desktop",
+    # The default brain lives here and is imported lazily from config.py,
+    # server.py and run.py, so PyInstaller cannot see it from the imports alone.
+    "aegis.local_llm",
 ]
 if sys.platform.startswith("win"):
     hiddenimports += ["webview.platforms.edgechromium", "webview.platforms.winforms"]
