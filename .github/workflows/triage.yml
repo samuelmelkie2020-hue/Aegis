@@ -16,6 +16,12 @@ jobs:
         run: |
           $out = python packaging/entry.py --self-check 2>&1 | Out-String
           $code = $LASTEXITCODE
+          $log = Join-Path $env:APPDATA 'Aegis\aegis-startup.log'
+          if (Test-Path $log) { $out += "`n=== STARTUP LOG ===`n" + (Get-Content $log -Raw) }
+          $crash = Join-Path $env:APPDATA 'Aegis\aegis-crash.log'
+          if (Test-Path $crash) { $out += "`n=== CRASH LOG ===`n" + (Get-Content $crash -Raw) }
+          $out += "`n=== python -c import webview ===`n"
+          $out += (python -c "import webview; print('ok', webview.__version__)" 2>&1 | Out-String)
           foreach ($line in ($out -split "`r?`n")) {
             $safe = $line -replace '%','%25'
             Write-Host "::error::EXIT=$code | $safe"
