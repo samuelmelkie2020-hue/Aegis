@@ -8,6 +8,8 @@ config.json
 # Diagnostics written by the desktop shell
 self-check.txt
 aegis-crash.log
+aegis-startup.log
+aegis-diagnose.txt
 
 # Python
 __pycache__/
