@@ -51,7 +51,7 @@ def run_web(host: str, port: int, open_browser: bool) -> int:
     from aegis.server import app
 
     print()
-    print("  🛡 Aegis — your Aegis is awake")
+    print("  Aegis is awake")
     print(f"  →  open {unlock_url(port, host)}")
     print(f"     {describe_exposure(host)}")
     if host not in {"127.0.0.1", "localhost", "::1"}:

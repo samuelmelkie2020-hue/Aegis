@@ -721,3 +721,85 @@ def test_the_desktop_shell_opens_with_the_installed_pywebview_signature(monkeypa
     assert desktop.run_desktop(port=0) == 0
     assert recorded["window_kwargs"]["title"] == "Aegis"
     assert recorded["start_kwargs"]["http_server"] is False
+
+
+def test_a_legacy_code_page_cannot_stop_the_app_from_opening(monkeypatch):
+    """The exact Windows failure: printing the banner raised UnicodeEncodeError.
+
+    A real console on Windows can be cp1252, where U+1F6E1 has no mapping. The
+    startup banner was the last line before the window was created, so the app
+    died with a perfectly healthy server behind it.
+    """
+    import io
+
+    from aegis import desktop
+
+    stream = io.TextIOWrapper(io.BytesIO(), encoding="cp1252", errors="strict", newline="")
+    monkeypatch.setattr(__import__("sys"), "stdout", stream)
+
+    stream.write("\n  now the banner:\n")  # ascii is fine
+    with pytest.raises(UnicodeEncodeError):
+        stream.write("\n  🛡 Aegis is running\n")  # this is what used to happen
+
+    desktop._ensure_streams()
+    desktop._print_safe("\n  🛡 Aegis is running")  # must not raise
+    desktop._print_safe("plain text is unaffected")
+
+
+def test_the_startup_banner_goes_through_the_safe_printer():
+    source = (Path(__file__).resolve().parent.parent / "aegis" / "desktop.py").read_text(
+        encoding="utf-8"
+    )
+    assert "_print_safe(f\"\\n  🛡" in source, "the emoji banner must use _print_safe"
+    assert "print(f\"\\n  🛡" not in source
+
+
+def test_the_linux_bundle_carries_gtk_typelibs():
+    """"You must have either QT or GTK …" is a broken bundle, not a broken PC."""
+    spec = (Path(__file__).resolve().parent.parent / "packaging" / "aegis.spec").read_text(
+        encoding="utf-8"
+    )
+    assert "collect_typelib_data" in spec
+    assert "gi.repository.Gtk" in spec
+    assert "WebKit2-4.1" in spec
+    assert "list(_typelibs)" in spec, "the typelibs must actually reach datas"
+
+
+def test_the_window_proof_ends_the_process_even_if_the_loop_does_not(monkeypatch, tmp_path):
+    """macOS: destroying the window does not end Cocoa's run loop."""
+    import sys
+    import types
+
+    from aegis import config, desktop
+
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path)
+    monkeypatch.setenv("AEGIS_WINDOW_PROOF", "1")
+    monkeypatch.setenv("AEGIS_WINDOW_PROOF_SECONDS", "0.05")
+    exits: list[int] = []
+    monkeypatch.setattr(desktop.os, "_exit", lambda code: exits.append(code))
+
+    module = types.ModuleType("webview")
+    menu = types.ModuleType("webview.menu")
+    menu.Menu = type("Menu", (), {"__init__": lambda s, t, i: None})
+    menu.MenuAction = type("MenuAction", (), {"__init__": lambda s, t, f: None})
+    menu.MenuSeparator = lambda: object()
+
+    class Window:
+        def load_url(self, url):
+            pass
+
+        def expose(self, *f):
+            pass
+
+        def destroy(self):
+            pass  # deliberately does NOT stop the process: that is the point
+
+    module.menu = menu
+    module.create_window = lambda **kw: Window()
+    module.start = lambda **kw: __import__("time").sleep(0.4)  # a loop that does not end
+    monkeypatch.setitem(sys.modules, "webview", module)
+    monkeypatch.setitem(sys.modules, "webview.menu", menu)
+    monkeypatch.setattr(desktop, "_adopt_local_model", lambda **k: None)
+
+    assert desktop.run_desktop(port=0) == 0
+    assert exits == [0], "the proof run must end the process itself"

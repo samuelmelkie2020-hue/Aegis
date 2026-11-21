@@ -34,7 +34,20 @@ else:
     _icon_file = ASSETS / "aegis.png"
 icon = str(_icon_file) if _icon_file.exists() else None
 
-datas = [
+# GI typelibs are data, not imports, and PyInstaller does not find them by
+# following imports. Collect them explicitly so the bundled app can open a window.
+try:  # pragma: no cover - only on a Linux build machine
+    from PyInstaller.utils.hooks import collect_typelib_data  # noqa: F401
+except Exception:  # pragma: no cover
+    collect_typelib_data = None
+
+if sys.platform.startswith("linux") and collect_typelib_data is not None:
+    hiddenimports += ["gi.repository.Gtk", "gi.repository.WebKit2", "gi.repository.Gdk"]
+    _typelibs = collect_typelib_data("Gtk-3.0", "WebKit2-4.1", "Gdk-3.0")
+else:
+    _typelibs = []
+
+datas = list(_typelibs) + [
     (str(ROOT / "aegis" / "static"), "aegis/static"),  # includes aegis.png (window icon)
     # The bootstrap locates the real entry point at runtime. Carrying it as data
     # is what makes --self-check and --diagnose work in the *frozen* build,
@@ -64,7 +77,10 @@ if sys.platform.startswith("win"):
 elif sys.platform == "darwin":
     hiddenimports += ["webview.platforms.cocoa"]
 else:
-    hiddenimports += ["webview.platforms.gtk", "webview.platforms.qt"]
+    # The frozen binary is run on a bare runner (xvfb, no pip install), so GTK and
+    # its GI typelib have to be *inside* the bundle. Without them the window can
+    # never be created: "You must have either QT or GTK with Python extensions".
+    hiddenimports += ["webview.platforms.gtk", "webview.platforms.qt", "gi", "gi.repository"]
 
 excludes = [
     "tkinter",          # pywebview may probe Tk; we never use it

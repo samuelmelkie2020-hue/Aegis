@@ -294,18 +294,54 @@ def window_icon_path() -> Path | None:
 
 
 def _ensure_streams() -> None:
-    """Give a windowed bundle somewhere to print.
+    """Give a windowed bundle somewhere to print, in an encoding that cannot fail.
 
-    PyInstaller's ``console=False`` build leaves ``sys.stdout`` and ``sys.stderr``
-    as ``None``, so a bare ``print`` raises ``AttributeError`` and takes the
-    process down. Diagnostics must survive that.
+    Two separate failures live here, both seen on real machines:
+
+    * PyInstaller's ``console=False`` build leaves ``sys.stdout`` as ``None``, so a
+      bare ``print`` raises ``AttributeError`` and takes the process down.
+    * On Windows a console that exists but uses a legacy code page (cp1252) raises
+      ``UnicodeEncodeError`` on the first banner emoji — ``'charmap' codec can't
+      encode character '\U0001f6e1'`` is the exact error that stopped the window
+      from ever being created.
+
+    So: hand back a devnull file when there is nothing, and force the encoding to
+    UTF-8 with ``errors="replace"`` when there is something. A banner is never
+    worth a failed launch.
     """
     for name in ("stdout", "stderr"):
-        if getattr(sys, name) is None:
+        stream = getattr(sys, name)
+        if stream is None:
             try:
                 setattr(sys, name, open(os.devnull, "w", encoding="utf-8"))  # noqa: SIM115
             except OSError:  # pragma: no cover - devnull always opens
                 pass
+            continue
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:  # not a TextIOWrapper, or closed; printing must still work
+            pass
+
+
+def _print_safe(text: str = "") -> None:
+    """print() that cannot raise on a code page or a closed stream.
+
+    Kept separate from :func:`_ensure_streams` because a stream can be replaced
+    after startup (a frozen app on Windows reassigns it), and because diagnostics
+    are the one thing that must never become the failure.
+    """
+    try:
+        print(text)
+        return
+    except Exception:
+        pass
+    try:
+        buffer = getattr(sys.stdout, "buffer", None)
+        if buffer is not None:
+            buffer.write((text + "\n").encode("ascii", "replace"))
+            buffer.flush()
+    except Exception:  # pragma: no cover - nothing left to try
+        pass
 
 
 def self_check() -> int:
@@ -692,10 +728,7 @@ def _fallback_to_browser(url: str, reason: str) -> None:
         f"Reason: {reason}\n\n"
         "Everything works exactly the same there. This tab is the app."
     )
-    try:
-        print(f"\n  {message}\n")
-    except Exception:  # pragma: no cover - no console in a windowed build
-        pass
+    _print_safe(f"\n  {message}\n")
     _write_heartbeat(f"window FAILED ({reason}) — using the browser instead")
     if _open_in_browser(url):
         return
@@ -898,10 +931,14 @@ def run_desktop(
                     window.destroy()
                 except Exception:  # pragma: no cover - backend dependent
                     pass
+                # Cocoa's run loop does not necessarily end when the last window
+                # does (pywebview keeps it alive), so the proof run must stop the
+                # process itself. It has already recorded WINDOW CREATED.
+                os._exit(0)
 
             threading.Thread(target=_close_soon, name="aegis-window-proof", daemon=True).start()
-        print(f"\n  🛡 Aegis is running as a desktop app (port {chosen}).")
-        print("     Close the window to quit.\n")
+        _print_safe(f"\n  🛡 Aegis is running as a desktop app (port {chosen}).")
+        _print_safe("     Close the window to quit.\n")
 
         try:
             _start_webview(
