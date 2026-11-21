@@ -22,6 +22,7 @@ Ask it in plain English (or by voice) and it will look at your screen, run comma
 | 🧠 **Runs on your PC** | The AI model lives on your computer (**Ollama** / LM Studio). No API key, no account, nothing leaves the machine |
 | 📦 **Installs its own model** | Aegis checks your CPU, RAM and GPU, recommends a model that fits, and downloads it from inside the app |
 | 🛡 **Safe mode** | Asks your approval before touching your PC (on by default) |
+| ⏹ **Stop button** | Change your mind mid-answer: Stop (or `Esc`) ends the turn at once, even while a local model is still thinking |
 | 🔌 **Cloud is optional** | OpenAI, Gemini, Groq and OpenRouter still work if you prefer — your choice, never required |
 
 ---
@@ -140,6 +141,12 @@ Paste your API key and **Save**. Use a **vision-capable model** so Aegis can see
 - **Type** in the chat box — Enter sends.
 - **🎙 Voice** — click the mic and speak (Chrome/Edge; it also reads replies aloud — toggle with *Speak replies*).
 - **Quick actions** — the chips on the left for common requests.
+- **💾 Save** — the icon next to 🧹 writes the conversation to a Markdown file
+  (`aegis-conversation-<time>.md`). It is a local download; nothing is uploaded.
+- **⏹ Stop** — while Aegis is answering, the Send button becomes **Stop** (or press
+  `Esc`). The turn ends immediately: a half-written reply stays on screen and is
+  marked as stopped, rather than arriving as an error a minute later. This works
+  *during* a slow model call, not just between steps.
 
 Things you can say:
 
@@ -197,6 +204,9 @@ one, and the helper's log is at `<data dir>/update/update.log` (or
 
 ## 🛡 Safety
 
+The full threat model — what is protected, what is *not*, and how to report a
+problem — is in **[SECURITY.md](SECURITY.md)**. The short version:
+
 - **Ask before acting** (safe mode) is ON by default: Aegis pauses before running commands, opening apps, typing, clicking or writing files, and shows an **Approve / Deny** card. Turn it off only on machines you fully trust it with.
 - **Safe mode cannot be disabled by a browser.** It is read from `aegis_config.json` on every turn; the page can only *save* a new value, and only through an authenticated request.
 - It refuses destructive commands (deleting system files, formatting disks…) unless you explicitly ask.
@@ -206,6 +216,13 @@ one, and the helper's log is at `<data dir>/update/update.log` (or
 - **A local model has no key and no network.** `local` is derived from the base URL on the server (loopback only) and is never trusted from the client, so a cloud endpoint cannot pretend to be local — and a "local" provider cannot point at a LAN machine.
 - **Live view is opt-in and limits itself.** Off by default, token-gated, capped at 4 fps **by the server** rather than the page, stopped when the tab goes to the background, and ended after 30 minutes. The panel shows a red **Live** badge that turns amber **Stalled** if frames stop arriving — the badge never claims to be watching a screen it is not reading.
 - Requests whose `Host` header is not this machine are rejected, which blocks DNS-rebinding attacks from a web page you happen to visit.
+
+- **Test connection only probes this PC or the public internet.** The button has to
+  dial the URL in the form before it is saved, so private, link-local and reserved
+  addresses (routers, NAS boxes, cloud metadata endpoints) are refused — otherwise
+  that button would be a way to make your own machine poke at your network. A model
+  on another machine is reachable through an SSH tunnel, which appears on
+  `127.0.0.1`.
 
 ### What Aegis will not do
 
@@ -224,6 +241,28 @@ AEGIS_HOST=0.0.0.0 AEGIS_ALLOWED_HOSTS=192.168.1.50 python run.py --web
 ```
 
 The token is still required, so only devices that can read the URL (or the `.aegis_token` file) can control the PC. Add your host or IP to `AEGIS_ALLOWED_HOSTS`, otherwise the `Host` check rejects it. Only do this on a network you trust.
+
+Two related switches matter when you expose the app:
+
+| Variable | Default | What it does |
+|---|---|---|
+| `AEGIS_EMBED_TOKEN` | on for a loopback bind | puts the token in the page, so the local window signs itself in. A LAN visitor never gets it — they must use the URL you printed |
+| `AEGIS_PREVIEW_HOST_SUFFIXES` | **empty** | extra host names whose pages may receive the token (for a hosted preview pane). Empty on purpose: no third-party domain is trusted on a fresh install |
+
+### Running it inside a hosted sandbox
+
+A hosted preview (a container that serves Aegis on a public `*.example.app` host)
+needs two things a normal install deliberately does not do: accept that host name,
+and put the token in the page, because there is no terminal to read it from. Both
+are opt-in per process:
+
+```bash
+AEGIS_HOST=0.0.0.0 AEGIS_ALLOWED_HOSTS=* \
+AEGIS_PREVIEW_HOST_SUFFIXES=.example.app AEGIS_EMBED_TOKEN=1 python run.py --web
+```
+
+Understand what that means before using it: **anyone who can reach that URL controls
+the machine Aegis runs on.** Only for a throwaway sandbox with nothing on it.
 
 ---
 
@@ -268,7 +307,7 @@ Environment variables:
 
 ```bash
 pip install -r requirements-dev.txt   # runtime deps + pytest + ruff
-python -m pytest -q                   # 446 tests, ~13s, no display, no API key, no internet
+python -m pytest -q                   # 479 tests, ~14s, no display, no API key, no internet
 ruff check .                          # lint (config lives in pyproject.toml)
 python run.py --self-check            # diagnose a machine: data dir, server, webview
 node --check aegis/static/app.js      # front-end syntax
@@ -360,15 +399,21 @@ after 30 minutes, and treats a gap of 2 minutes as a new run. `503` carries a JS
 
 | `type` | Meaning |
 |---|---|
+| `turn` | `{turn_id}` — always first; POST it to `/api/chat/stop` to cancel |
 | `status` | `{message}` — keep-alive-ish progress note |
 | `tool_start` / `tool_result` | `{name, args}` then `{name, result, ok}` |
 | `approval` | `{approval_id, name, args, description}` — POST the id to `/api/approve` |
 | `screenshot` | `{data}` — base64 PNG |
 | `message` | `{text}` — markdown-ish reply text |
 | `error` | `{message}` — the only failure event; render this text once |
-| `done` | `{ok, text}` — exactly one per stream, always last |
+| `done` | `{ok, text, stopped?, timed_out?}` — exactly one per stream, always last |
 
 `: ping` comment lines are sent every 15 s so proxies do not drop a stream during a slow model call.
+
+`POST /api/chat/stop` with `{"turn_id": "turn-1"}` ends a running turn: the stream
+then finishes with `done {ok: true, stopped: true}` (or `timed_out: true` when the
+five-minute budget ended it). Stopping a turn that already finished is a no-op,
+never an error.
 
 The brain is a **local model** by default (`aegis/local_llm.py`): at startup Aegis
 probes `127.0.0.1:11434` (Ollama), `:1234` (LM Studio) and `:8080` (llama.cpp), and

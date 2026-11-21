@@ -190,8 +190,31 @@ def test_unknown_host_never_receives_the_token(anon):
     assert 'window.AEGIS_TOKEN = ""' in response.text
 
 
-def test_preview_host_is_supported_for_embedding(anon):
-    response = anon.get("/config.js", headers={"Host": "8000-abc123.e2b.app", "Sec-Fetch-Site": "none"})
+def test_no_third_party_host_is_trusted_out_of_the_box(anon):
+    """Shipped software must not hand its token to somebody else's domain.
+
+    This used to allow ``*.e2b.app`` unconditionally — an artifact of developing
+    Aegis inside a hosted preview sandbox. On every machine that installed the
+    app, that meant a domain we do not control was allowed to fetch the access
+    token; the port is loopback-only, but the rule had no business shipping.
+    """
+    response = anon.get(
+        "/config.js", headers={"Host": "8000-abc123.e2b.app", "Sec-Fetch-Site": "none"}
+    )
+    assert 'window.AEGIS_TOKEN = ""' in response.text
+
+
+def test_preview_host_support_is_opt_in(anon, monkeypatch):
+    """A sandbox that really needs it opts in through the environment."""
+    from aegis import security
+
+    monkeypatch.setenv("AEGIS_PREVIEW_HOST_SUFFIXES", ".sandbox.example")
+    monkeypatch.setattr(
+        security, "PREVIEW_HOST_SUFFIXES", (".sandbox.example",)
+    )
+    response = anon.get(
+        "/config.js", headers={"Host": "8000-abc123.sandbox.example", "Sec-Fetch-Site": "none"}
+    )
     assert 'window.AEGIS_TOKEN = ""' not in response.text
 
 
@@ -208,3 +231,59 @@ def test_pages_carry_no_frame_denial_headers(anon):
         assert header not in {k.lower() for k in response.headers}, (
             f"{header} would break the preview pane"
         )
+
+
+# ---------------------------------------------------------------------------
+# Outbound endpoint policy (the Test-connection probe)
+# ---------------------------------------------------------------------------
+
+def test_private_addresses_are_not_probed(anon, auth):
+    """Test connection must not become a request-forger for the user's LAN."""
+    response = anon.post(
+        "/api/test-connection",
+        headers=auth,
+        json={"settings": {"llm": {
+            "base_url": "http://192.168.1.1/v1", "api_key": "k", "model": "m",
+        }}},
+    )
+    body = response.json()
+    assert body["ok"] is False
+    assert "private address" in body["detail"]
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://10.0.0.5:8000/v1",
+        "http://169.254.169.254/latest/meta-data",   # cloud metadata
+        "http://172.16.0.1/v1",
+        "http://[fd00::1]/v1",
+        "file:///etc/passwd",
+        "ftp://example.com/v1",
+        "gopher://example.com/v1",
+    ],
+)
+def test_dangerous_probe_targets_are_refused(anon, auth, url):
+    response = anon.post(
+        "/api/test-connection",
+        headers=auth,
+        json={"settings": {"llm": {"base_url": url, "api_key": "k", "model": "m"}}},
+    )
+    assert response.json()["ok"] is False
+
+
+def test_loopback_and_public_endpoints_are_still_allowed():
+    """The guard must not break the two configurations the app actually uses."""
+    from aegis.safety import outbound_reason
+
+    assert outbound_reason("http://127.0.0.1:11434/v1") is None
+    assert outbound_reason("http://localhost:1234/v1") is None
+    assert outbound_reason("https://api.openai.com/v1") is None
+    assert outbound_reason("https://openrouter.ai/api/v1") is None
+
+
+def test_the_probe_guard_names_the_problem_and_the_way_out():
+    from aegis.safety import outbound_reason
+
+    reason = outbound_reason("http://192.168.1.50:8080/v1")
+    assert reason and "192.168.1.50" in reason

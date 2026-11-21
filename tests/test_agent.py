@@ -409,3 +409,106 @@ def test_final_reply_is_emitted(agent):
 def test_empty_model_reply_has_a_fallback(agent):
     agent["factory"]([{"role": "assistant", "content": ""}])
     assert agent["run"]("hi") == "(no response)"
+
+
+# ---------------------------------------------------------------------------
+# Stopping a turn on purpose (the Stop button)
+# ---------------------------------------------------------------------------
+
+def test_a_user_stop_says_the_user_stopped_it():
+    """The reply must distinguish "you stopped this" from "the tab closed"."""
+    from aegis.llm import Turn, TurnCancelled
+
+    turn = Turn(stop_event=threading.Event())
+    turn.set_reason("user")
+    turn.stop_event.set()
+    with pytest.raises(TurnCancelled) as excinfo:
+        turn.check()
+    assert "you stopped" in str(excinfo.value)
+    assert turn.cancelled_by_user is True
+
+
+def test_a_timeout_is_reported_as_a_timeout():
+    from aegis.llm import Turn, TurnCancelled
+
+    turn = Turn(budget=0.01)
+    time.sleep(0.02)
+    with pytest.raises(TurnCancelled):
+        turn.check()
+    assert turn.reason == "timeout"
+    assert turn.cancelled_by_user is False
+
+
+def test_a_client_that_takes_no_turn_still_works(agent):
+    """A client predating the interruptible call must not break the loop.
+
+    ``turn=`` is how a model call becomes stoppable mid-flight. Handing it to a
+    client that does not accept it would be a TypeError on the user's first
+    message, so the call is adapted, not assumed.
+    """
+    fake = agent["factory"]([])
+    assert agent["run"]("hi") == "done"
+    assert len(fake.calls) == 1
+
+
+def test_a_client_that_takes_a_turn_receives_it(agent, monkeypatch):
+    """The real ChatClient takes the turn, so Stop lands during the model call."""
+    from aegis import llm as llm_mod
+
+    seen = {}
+
+    class Client:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def complete(self, messages, tools, turn=None):
+            seen["turn"] = turn
+            return {"role": "assistant", "content": "hello"}
+
+    monkeypatch.setattr(llm_mod, "ChatClient", Client)
+    stop = threading.Event()
+    text = agent["run"]("hi", turn=llm_mod.Turn(stop_event=stop))
+    assert text == "hello"
+    assert seen["turn"] is not None
+    assert seen["turn"].stop_event is stop
+
+
+def test_the_model_call_is_interrupted_while_the_body_is_still_arriving(monkeypatch):
+    """Stop must land during a slow answer, not after it finishes.
+
+    This is the whole point: a local model can stream for a minute. The call
+    reads the response body in chunks and checks the turn between them.
+    """
+    import httpx
+
+    from aegis.llm import ChatClient, Turn, TurnCancelled
+
+    stop = threading.Event()
+
+    class SlowResponse:
+        status_code = 200
+
+        def iter_bytes(self):
+            yield b'{"choices": [{"message": {"content": "wor"'
+            stop.set()             # the user presses Stop mid-answer
+            yield b'king"}}]}'
+
+    class ResponseContext:
+        def __enter__(self):
+            return SlowResponse()
+
+        def __exit__(self, *exc):
+            return False
+
+    captured = {}
+
+    def fake_stream(method, url, **kwargs):
+        captured.update(kwargs)
+        return ResponseContext()
+
+    monkeypatch.setattr(httpx, "stream", fake_stream)
+    client = ChatClient("https://api.example/v1", "k", "m")
+    with pytest.raises(TurnCancelled):
+        client.complete([{"role": "user", "content": "hi"}], [], turn=Turn(stop_event=stop))
+    # The call is made with a bounded timeout, not the old single 240s ceiling.
+    assert captured["timeout"].connect == 30

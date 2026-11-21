@@ -157,6 +157,7 @@
         </div>
         <div class="chat-tools">
           <span class="panel-tag" id="clock">--:--:--</span>
+          <button id="exportChat" class="icon-btn" title="Save this conversation" aria-label="Save this conversation">💾</button>
           <button id="clearChat" class="icon-btn" title="New conversation" aria-label="New conversation">🧹</button>
         </div>
       </header>
@@ -186,8 +187,10 @@
                       aria-describedby="composerHint"></textarea>
           </div>
           <button id="sendBtn" class="send-btn" title="Send" aria-label="Send message">Send</button>
+          <button id="stopBtn" class="send-btn stop-btn hidden" title="Stop (Esc)"
+                  aria-label="Stop this answer">Stop</button>
         </div>
-        <p class="composer-hint" id="composerHint"><kbd>Enter</kbd> send · <kbd>Shift</kbd>+<kbd>Enter</kbd> line · voice needs Chrome/Edge</p>
+        <p class="composer-hint" id="composerHint"><kbd>Enter</kbd> send · <kbd>Shift</kbd>+<kbd>Enter</kbd> line · <kbd>Esc</kbd> stop · voice needs Chrome/Edge</p>
       </footer>
     </main>
   </div>

@@ -13,10 +13,18 @@ import pytest
 
 
 def parse_sse(text: str) -> list[dict]:
+    """Every ``data:`` event except the leading ``turn`` handshake.
+
+    The handshake names the turn so the UI can stop it (see /api/chat/stop); it
+    is not part of the reply contract, so the tests below describe the reply.
+    """
     events = []
     for line in text.splitlines():
         if line.startswith("data: "):
-            events.append(json.loads(line[len("data: "):]))
+            event = json.loads(line[len("data: "):])
+            if event.get("type") == "turn":
+                continue
+            events.append(event)
     return events
 
 
@@ -144,3 +152,79 @@ def test_a_worker_that_dies_still_terminates_the_stream(client, monkeypatch):
     events = parse_sse(http.post("/api/chat", headers=auth, json={"message": "hi"}).text)
     assert events[-1]["type"] == "done"
     assert any(e["type"] == "error" for e in events)
+
+
+# ---------------------------------------------------------------------------
+# Stopping a turn (#stop)
+# ---------------------------------------------------------------------------
+
+def test_the_stream_announces_a_turn_id_first(client, scripted):
+    """The Stop button needs something to name before it can stop anything."""
+    http, auth = client
+    scripted([("message", {"text": "hi"})], text="hi")
+    events = [json.loads(line[6:]) for line in
+              http.post("/api/chat", headers=auth, json={"message": "hi"}).text.splitlines()
+              if line.startswith("data: ")]
+    assert events[0]["type"] == "turn"
+    assert events[0]["turn_id"].startswith("turn-")
+
+
+def test_stop_is_idempotent_and_never_errors_on_a_finished_turn(client):
+    http, auth = client
+    first = http.post("/api/chat/stop", headers=auth, json={"turn_id": "turn-999999"})
+    second = http.post("/api/chat/stop", headers=auth, json={"turn_id": "turn-999999"})
+    assert first.status_code == second.status_code == 200
+    assert second.json()["stopped"] is False
+    assert "already finished" in second.json()["detail"]
+
+
+def test_stop_requires_a_turn_id(client):
+    http, auth = client
+    response = http.post("/api/chat/stop", headers=auth, json={})
+    assert response.status_code == 400
+
+
+def test_stop_requires_the_access_token(anon):
+    """Otherwise any page on this machine could cancel the user's work."""
+    response = anon.post(
+        "/api/chat/stop", headers={"Host": "localhost:8000"}, json={"turn_id": "turn-1"}
+    )
+    assert response.status_code == 401
+
+
+def test_a_stopped_turn_reports_stopped_not_failed(client, monkeypatch):
+    """End to end: press Stop mid-stream and read the last two events."""
+    import threading
+
+    from aegis import server
+    from aegis.llm import TurnCancelled
+
+    started = threading.Event()
+
+    def slow(message, history, cfg, emit, token="", turn=None):
+        emit("message", {"text": "let me think"})
+        started.set()
+        for _ in range(500):
+            turn.check()          # raises once /api/chat/stop is called
+            time.sleep(0.01)
+        raise AssertionError("the turn was never stopped")
+
+    monkeypatch.setattr(server, "run_agent_turn", slow)
+    http, auth = client
+
+    def stop_once_the_turn_is_visible():
+        started.wait(5)
+        turn_id = next(iter(server._active_turns))
+        http.post("/api/chat/stop", headers=auth, json={"turn_id": turn_id})
+
+    stopper = threading.Thread(target=stop_once_the_turn_is_visible, daemon=True)
+    stopper.start()
+    text = http.post("/api/chat", headers=auth, json={"message": "hi"}).text
+    stopper.join(5)
+
+    events = parse_sse(text)
+    assert [e["type"] for e in events] == ["message", "done"]
+    assert events[-1]["stopped"] is True
+    assert events[-1]["ok"] is True
+    assert "error" not in [e["type"] for e in events]
+    assert TurnCancelled  # the machinery under test is the cancelling path

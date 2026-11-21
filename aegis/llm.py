@@ -3,6 +3,7 @@ or falls back to a built-in demo brain when no key is configured."""
 
 from __future__ import annotations
 
+import inspect
 import json
 import re
 import time
@@ -21,26 +22,51 @@ EmitFn = Callable[[str, dict], None]
 
 
 class TurnCancelled(RuntimeError):
-    """Raised when the turn must stop: the client left, or the budget ran out."""
+    """Raised when the turn must stop: the user pressed Stop, the client left,
+    or the budget ran out."""
 
 
 class Turn:
     """Per-request stop conditions.
 
-    The queue bridge in :mod:`aegis.server` flips ``stop`` when the browser
-    goes away, and the deadline keeps one slow tool from pinning a worker (and
-    blocking every other request that needs the same config) forever.
+    Three things can end a turn early, and they are deliberately not the same
+    thing to the user:
+
+    * **the user pressed Stop** — expected, so the reply says so plainly
+      instead of looking like a crash;
+    * **the browser went away** — nobody is reading, so it ends silently;
+    * **the deadline passed** — a slow tool was pinning a worker, so the reply
+      explains the timeout.
+
+    The queue bridge in :mod:`aegis.server` flips ``stop_event`` for the first
+    two; ``reason`` records which, so the reply can say the right thing.
     """
 
-    def __init__(self, stop_event: Any = None, budget: float = TURN_BUDGET_SECONDS):
+    def __init__(self, stop_event: Any = None, budget: float = TURN_BUDGET_SECONDS,
+                 reason: str = ""):
         self.stop_event = stop_event
         self.deadline = time.monotonic() + budget
+        # "user" when the Stop button asked for this, "" when it was an
+        # abandoned stream, "timeout" when the budget ran out.
+        self.reason = reason
+        self._timeout_reason = "this request took too long and was stopped"
+
+    def set_reason(self, reason: str) -> None:
+        """Name *why* this turn is being stopped, before setting the event."""
+        self.reason = reason
 
     def check(self) -> None:
         if self.stop_event is not None and self.stop_event.is_set():
+            if self.reason == "user":
+                raise TurnCancelled("you stopped this turn")
             raise TurnCancelled("the browser left before this turn finished")
         if time.monotonic() > self.deadline:
-            raise TurnCancelled("this request took too long and was stopped")
+            self.reason = "timeout"
+            raise TurnCancelled(self._timeout_reason)
+
+    @property
+    def cancelled_by_user(self) -> bool:
+        return self.reason == "user"
 
 SYSTEM_PROMPT = """You are {name}, a personal AI assistant that runs on the user's computer — like Aegis.
 You can SEE the screen and CONTROL the computer with tools: run commands, open apps, type, click, manage files, read the clipboard and report system status.
@@ -67,7 +93,15 @@ class ChatClient:
         self.api_key = api_key or ""
         self.model = model
 
-    def complete(self, messages: list[dict], tools: list[dict]) -> dict[str, Any]:
+    def complete(self, messages: list[dict], tools: list[dict],
+                 turn: Turn | None = None) -> dict[str, Any]:
+        """One model call, interruptible while the answer is still streaming in.
+
+        A local 3B model can take a minute to answer, and a cloud call can hang
+        until the socket times out. Reading the response in chunks lets the Stop
+        button take effect *during* the wait instead of after it — a cancel that
+        only lands between tool calls is not a cancel, it is a queue.
+        """
         payload: dict[str, Any] = {
             "model": self.model,
             "messages": messages,
@@ -79,10 +113,23 @@ class ChatClient:
         headers = {"Content-Type": "application/json"}
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
-        resp = httpx.post(self.url, json=payload, headers=headers, timeout=240)
-        if resp.status_code != 200:
-            raise RuntimeError(f"LLM error {resp.status_code}: {resp.text[:500]}")
-        data = resp.json()
+        chunks: list[bytes] = []
+        with httpx.stream(
+            "POST", self.url, json=payload, headers=headers,
+            timeout=httpx.Timeout(240, connect=30),
+        ) as resp:
+            for chunk in resp.iter_bytes():
+                if turn is not None:
+                    turn.check()  # raises TurnCancelled as soon as Stop is pressed
+                chunks.append(chunk)
+            status_code = resp.status_code
+        body = b"".join(chunks)
+        if status_code != 200:
+            raise RuntimeError(f"LLM error {status_code}: {body[:500].decode('utf-8', 'replace')}")
+        try:
+            data = json.loads(body)
+        except ValueError as exc:
+            raise RuntimeError(f"Unexpected LLM response: {body[:500]!r}") from exc
         try:
             msg = data["choices"][0]["message"]
         except (KeyError, IndexError) as exc:
@@ -103,6 +150,21 @@ class ChatClient:
             ]
         return out
 
+
+def _complete(client: Any, messages: list[dict], tools: list[dict], turn: Turn) -> dict[str, Any]:
+    """Call the model, passing the turn only if the client understands it.
+
+    The turn is what makes a model call interruptible; a replaced client (a test
+    double, a plugin) that predates it still works unchanged.
+    """
+    method = client.complete
+    try:
+        accepts = "turn" in inspect.signature(method).parameters
+    except (TypeError, ValueError):  # pragma: no cover - exotic callables
+        accepts = False
+    if accepts:
+        return method(messages, tools, turn=turn)
+    return method(messages, tools)
 
 def _parse_args(raw: str) -> dict:
     try:
@@ -181,7 +243,7 @@ def run_agent_turn(
         turn.check()
         emit("status", {"message": "Thinking…"})
         try:
-            msg = client.complete(messages, TOOLS)
+            msg = _complete(client, messages, TOOLS, turn)
         except TurnCancelled:
             raise  # abandoning the turn is not a model error
         except Exception as exc:
@@ -308,12 +370,12 @@ def _resume_after_approval(
     emit: EmitFn,
     turn: Turn | None = None,
 ) -> str:
-    turn = turn or Turn()
     """Run the approved action exactly once and let the model react to it.
 
     The action is executed here, server-side, with the arguments the server
     itself proposed. The browser never says what to run.
     """
+    turn = turn or Turn()
     if isinstance(approval, tuple):  # ("error", reason)
         _, reason = approval
         text = f"That action couldn't be resumed — {reason} Ask me again and I'll re-request it."
@@ -355,7 +417,7 @@ def _resume_after_approval(
     turn.check()
     emit("status", {"message": "Thinking…"})
     try:
-        msg = client.complete(messages, TOOLS)
+        msg = _complete(client, messages, TOOLS, turn)
     except TurnCancelled:
         raise
     except Exception as exc:
