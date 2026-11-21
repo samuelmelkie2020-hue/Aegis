@@ -26,9 +26,26 @@ import pytest
 
 from aegis import updates
 
+# Captured before any fixture patches it: the autouse fixture replaces
+# updates.asset_name so tests are platform-independent, and this is the only
+# place the real mapping is asserted.
+_REAL_ASSET_NAME = updates.asset_name
+
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
+@pytest.fixture(autouse=True)
+def linux_asset(monkeypatch):
+    """Make the platform asset deterministic.
+
+    The suite originally hardcoded ``Aegis-linux.zip`` and passed — because it was
+    only ever run on Linux. On macOS and Windows ``asset_name()`` returns a
+    different file, so every test that built a release payload failed. CI caught
+    it; this fixture is why it cannot come back.
+    """
+    monkeypatch.setattr(updates, "asset_name", lambda system=None: "Aegis-linux.zip")
+
 
 @pytest.fixture(autouse=True)
 def isolated_staging(tmp_path, monkeypatch):
@@ -111,14 +128,18 @@ def test_a_release_without_a_checksum_is_refused():
 def test_a_release_without_this_platform_is_refused():
     payload = release_payload(asset="Aegis-plan9.zip")
     with pytest.raises(updates.UpdateError, match="build for this computer"):
-        updates.release_from_payload(payload, "Aegis-windows.zip")
+        updates.release_from_payload(payload, "Aegis-windows.zip")  # nothing matches
 
 
-def test_asset_names_match_what_ci_publishes():
+def test_asset_names_match_what_ci_publishes(monkeypatch):
     """A rename in the workflow would otherwise break updates silently."""
-    assert updates.asset_name("Windows") == "Aegis-windows.zip"
-    assert updates.asset_name("Darwin") == "Aegis-macos.zip"
-    assert updates.asset_name("Linux") == "Aegis-linux.zip"
+    assert _REAL_ASSET_NAME("Windows") == "Aegis-windows.zip"
+    assert _REAL_ASSET_NAME("Darwin") == "Aegis-macos.zip"
+    assert _REAL_ASSET_NAME("Linux") == "Aegis-linux.zip"
+    # And the real function agrees with what the CI matrix uploads.
+    workflow = (Path(__file__).resolve().parent.parent / ".github/workflows/desktop.yml").read_text()
+    for name in ("Aegis-windows", "Aegis-macos", "Aegis-linux"):
+        assert f"artifact: {name}" in workflow
 
 
 def test_the_release_is_parsed_into_something_usable():
@@ -635,10 +656,18 @@ def test_the_helper_is_launched_hidden_without_a_profile(isolated_staging, monke
 
 def test_the_scripts_are_plain_files_not_shell_strings(isolated_staging):
     """Nothing user-supplied reaches these scripts; the only inputs are paths
-    the server computed, so quoting is a correctness issue, not injection."""
-    script = updates._posix_script(1, Path("/p/Aegis"), Path("/t"), Path("/t/Aegis"))
+    the server computed, so quoting is a correctness issue, not injection.
+
+    Asserted against ``str(Path(...))`` rather than a literal: on Windows a
+    POSIX-looking path stringifies with backslashes, which is what broke this
+    test there.
+    """
+    payload = Path("/p/Aegis")
+    relaunch = Path("/t/Aegis")
+    script = updates._posix_script(1, payload, Path("/t"), relaunch)
     assert script.startswith("#!/bin/sh")
-    assert '"{relaunch}"'.replace("{relaunch}", "/t/Aegis") in script
+    assert f'"{relaunch}"' in script
+    assert f'"{payload}"' in script
 
 
 def test_apply_refuses_when_the_staged_payload_vanished(isolated_staging):
