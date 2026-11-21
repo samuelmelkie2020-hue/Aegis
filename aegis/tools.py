@@ -27,6 +27,9 @@ if TYPE_CHECKING:  # Pillow is imported lazily: --self-check must not need it
 MAX_IMAGE_WIDTH = 1280   # screenshots are downscaled to this for the model
 MAX_OUTPUT = 4000        # max characters of tool output fed back to the model
 MAX_FILE_READ = 8000     # max characters of a file read (also the read cap)
+MAX_LINE_READ = 400      # characters kept per line: a minified bundle is one line
+MAX_LINES_READ = 400     # lines kept by read_file
+MAX_READ_BYTES = 512_000  # bytes lifted off disk by one read_file call
 MAX_WALK_DIRS = 2000     # folders inspected by a single search_files call
 MAX_SEARCH_ENTRIES = 60000  # files inspected by a single search_files call
 MAX_SEARCH_HITS = 30     # matches returned by search_files
@@ -640,10 +643,37 @@ def read_file(path: str) -> dict[str, Any]:
         # Never materialise a whole (possibly huge or binary) file: read one
         # character past the cap so we can still say that it was truncated.
         with p.open("r", encoding="utf-8", errors="replace") as handle:
-            text = handle.read(MAX_FILE_READ + 1)
+            text = handle.read(MAX_READ_BYTES)
     except Exception as exc:
         return _fail(str(exc))
-    return {"ok": True, "result": _truncate(text, MAX_FILE_READ)}
+    return {"ok": True, "result": _shape_read(text, len(text) >= MAX_READ_BYTES)}
+
+
+def _shape_read(text: str, complete: bool) -> str:
+    """Trim a file read so both ends of it survive.
+
+    Cutting a file at N characters sounds safe and is not: a minified JS bundle
+    is a single line, so *every* byte after the first 8,000 was dropped and the
+    model was told the file ended there. Keeping a bounded prefix of each line
+    and a bounded number of lines means a long line costs one truncated line
+    instead of the whole remaining file, and the marker says what was cut.
+    """
+    lines = text.splitlines()
+    kept: list[str] = []
+    for line in lines[:MAX_LINES_READ]:
+        if len(line) > MAX_LINE_READ:
+            kept.append(line[:MAX_LINE_READ] + f" … [line truncated: {len(line) - MAX_LINE_READ} more characters]")
+        else:
+            kept.append(line)
+    out = "\n".join(kept)
+    notes = []
+    if len(lines) > MAX_LINES_READ:
+        notes.append(f"{len(lines) - MAX_LINES_READ} more lines")
+    if not complete:
+        notes.append("the file is larger than this read")
+    if notes:
+        out += f"\n… [truncated: {', '.join(notes)}]"
+    return _truncate(out, MAX_FILE_READ)
 
 
 def write_file(path: str, content: str) -> dict[str, Any]:

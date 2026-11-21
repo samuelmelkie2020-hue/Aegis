@@ -136,6 +136,91 @@ def check_writable(path: str | Path) -> tuple[Path | None, str | None]:
 
 
 # ---------------------------------------------------------------------------
+# Outbound endpoint policy
+# ---------------------------------------------------------------------------
+
+# Cloud LLM providers live on the public internet. Everything else is suspect:
+# the only reason an OpenAI-compatible endpoint would sit on a private or
+# link-local address is that it is *not* an LLM provider.
+_LOOPBACK = {"127.0.0.1", "localhost", "::1", "0.0.0.0"}
+
+
+def _address_reason(host: str) -> str | None:
+    """Why ``host`` is not a provider we would send a key to, or None.
+
+    Loopback is deliberately allowed everywhere: a model on this machine is the
+    default configuration, and ``is_local_url`` ("does the model run here?") is
+    a narrower question than "may we open a socket?".
+    """
+    import ipaddress
+    import socket
+
+    raw = (host or "").strip().strip("[]").lower()
+    if not raw:
+        return "no host name"
+    if raw in _LOOPBACK:
+        return None
+    try:
+        addresses = {raw} if _is_ip(raw) else set()
+        addresses = addresses or {
+            str(info[4][0])
+            for info in socket.getaddrinfo(raw, None, proto=socket.IPPROTO_TCP)
+        }
+    except (socket.gaierror, UnicodeError, ValueError):
+        return None  # unresolvable: the request itself will fail, and say so
+    for candidate in addresses:
+        try:
+            ip = ipaddress.ip_address(candidate.split("%")[0])
+        except ValueError:
+            continue
+        if ip.is_loopback:
+            return None
+        if ip.is_private or ip.is_link_local or ip.is_reserved or ip.is_unspecified:
+            return (
+                f"{host} resolves to a private address ({ip}) — that is a device on "
+                f"your network, not an AI provider"
+            )
+    return None
+
+
+def _is_ip(value: str) -> bool:
+    import ipaddress
+
+    try:
+        ipaddress.ip_address(value)
+        return True
+    except ValueError:
+        return False
+
+
+def outbound_reason(url: str) -> str | None:
+    """Why a candidate LLM base URL must not be probed, or None if it is fine.
+
+    ``/api/test-connection`` opens a socket to whatever the Settings form
+    contains, before it is saved. That is by design — the button has to work
+    before Save — but it also makes the route a request-forger: with the token,
+    anything can ask this machine to POST to ``http://192.168.1.1/...`` or a
+    cloud metadata address, and read back whether it answered. So the probe is
+    limited to endpoints that could plausibly be an OpenAI-compatible server:
+    http(s), to this machine or to somewhere public.
+    """
+    from urllib.parse import urlsplit
+
+    raw = (url or "").strip()
+    if not raw:
+        return "no URL"
+    try:
+        parts = urlsplit(raw)
+    except ValueError:
+        return f"{raw!r} is not a URL"
+    if parts.scheme not in ("http", "https"):
+        return "the address must start with http:// or https://"
+    if not parts.hostname:
+        return f"{raw!r} has no host name"
+    return _address_reason(parts.hostname)
+
+
+# ---------------------------------------------------------------------------
 # Redaction
 # ---------------------------------------------------------------------------
 

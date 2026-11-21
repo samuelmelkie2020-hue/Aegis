@@ -42,11 +42,13 @@ TOKEN_FILE = Path(os.environ.get("AEGIS_TOKEN_FILE") or CONFIG_PATH.parent / ".a
 LOOPBACK_NAMES = {"localhost", "127.0.0.1", "::1"}
 LOOPBACK_BINDS = {"127.0.0.1", "localhost", "::1"}
 
-# Hosts the embedded preview pane serves the app from. Allowing these keeps the
-# app usable inside a hosted preview sandbox (which is single-user by design)
-# without opening the door to arbitrary public host names.
+# Hosts a *hosted preview pane* serves the app from. Empty by default, on
+# purpose: this is software the user installs on their own PC, and a shipped
+# allowlist for somebody else's domain would trust that domain with the access
+# token on every machine that installs it. A sandbox that needs it exports the
+# suffix instead — e.g. AEGIS_PREVIEW_HOST_SUFFIXES=.e2b.app.
 PREVIEW_HOST_SUFFIXES: tuple[str, ...] = tuple(
-    s for s in os.environ.get("AEGIS_PREVIEW_HOST_SUFFIXES", ".e2b.app").split(",") if s.strip()
+    s.strip() for s in os.environ.get("AEGIS_PREVIEW_HOST_SUFFIXES", "").split(",") if s.strip()
 )
 
 SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
@@ -125,9 +127,9 @@ def embed_token_for(host_header: str) -> bool:
     LAN-exposed server still refuses to hand its token to an unknown host name.
 
     * loopback host  — the normal local case; the caller is this machine.
-    * preview host   — an ephemeral single-user sandbox with no way for the
-      operator to read a token file; requiring one would just leave the app
-      unopenable there.
+    * preview host   — only when the operator opted in with
+      AEGIS_PREVIEW_HOST_SUFFIXES (empty by default: this is installed software,
+      not a hosted demo, so no third-party domain is trusted out of the box).
     * anything else  — no token in the page. Use the URL the terminal printed.
     """
     forced = os.environ.get("AEGIS_EMBED_TOKEN")

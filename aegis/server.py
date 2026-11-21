@@ -11,9 +11,11 @@ but nothing is applied to an agent turn until it is saved.
 from __future__ import annotations
 
 import base64
+import itertools
 import json
 import logging
 import os
+import threading
 import time
 from pathlib import Path
 
@@ -57,7 +59,52 @@ STATIC_DIR = Path(__file__).resolve().parent / "static"
 HEARTBEAT_SECONDS = 15      # SSE keepalive while the agent is thinking
 QUEUE_PUT_TIMEOUT = 5       # how long a tool may block on a stalled client
 MAX_QUEUE_ITEMS = 64        # bound the memory one abandoned turn can hold
+MAX_ACTIVE_TURNS = 8        # more than this is a client bug, not a user
 log = logging.getLogger("aegis.server")
+
+
+# ---------------------------------------------------------------------------
+# Running turns
+# ---------------------------------------------------------------------------
+#: ``turn_id`` → the live :class:`aegis.llm.Turn`. The browser gets the id in the
+#: first event of the stream and POSTs it back to ``/api/chat/stop``.
+_active_turns: dict[str, Turn] = {}
+_active_lock = threading.Lock()
+_turn_ids = itertools.count(1)
+
+
+def _register_turn(stop: threading.Event) -> tuple[str, Turn]:
+    """Create a cancellable turn and publish it, so the UI can stop it."""
+    turn = Turn(stop_event=stop)
+    turn_id = f"turn-{next(_turn_ids)}"
+    with _active_lock:
+        # A browser that reconnects without ending its old stream would otherwise
+        # accumulate turns forever. The oldest goes first: it is the abandoned one.
+        while len(_active_turns) >= MAX_ACTIVE_TURNS:
+            oldest = next(iter(_active_turns))
+            _active_turns[oldest].set_reason("superseded")
+            _active_turns.pop(oldest, None)
+        _active_turns[turn_id] = turn
+    return turn_id, turn
+
+
+def _release_turn(turn_id: str, turn: Turn) -> None:
+    with _active_lock:
+        if _active_turns.get(turn_id) is turn:
+            _active_turns.pop(turn_id, None)
+
+
+def _stop_turn(turn_id: str) -> bool:
+    """Ask one running turn to stop. Returns False if it already finished."""
+    with _active_lock:
+        turn = _active_turns.get(turn_id)
+    if turn is None:
+        return False
+    turn.set_reason("user")
+    if turn.stop_event is not None:
+        turn.stop_event.set()
+    return True
+
 
 # `docs_url` and friends are disabled deliberately. They need no token, so
 # leaving them on publishes a map of every endpoint — request bodies and all —
@@ -313,6 +360,21 @@ def test_connection(body: TestRequest) -> JSONResponse:
     if not base:
         return JSONResponse({"ok": False, "detail": "No API base URL set — pick a provider first."})
     host = base.split("//")[-1].split("/")[0]
+
+    # This route opens a socket to whatever the form contains, before it is saved.
+    # Allowing arbitrary addresses would make it a request-forger pointed at the
+    # user's own network (routers, NAS boxes, cloud metadata endpoints), so it is
+    # restricted to this machine and the public internet. See safety.outbound_reason.
+    from .safety import outbound_reason
+
+    blocked = outbound_reason(base)
+    if blocked:
+        return JSONResponse({"ok": False, "detail": (
+            f"🚫 {blocked}.\n"
+            "Aegis only talks to a model on this PC (http://127.0.0.1:…) or a public "
+            "provider (https://…). If your model really lives on another machine, "
+            "reach it through an SSH tunnel so it appears on 127.0.0.1."
+        )})
 
     # A local model has no key and no network: every cloud-flavoured message here
     # would send the user looking for the wrong thing.
@@ -717,6 +779,32 @@ def chat(body: ChatRequest, request: Request) -> StreamingResponse:
     )
 
 
+class StopRequest(BaseModel):
+    turn_id: str = Field(default="")
+
+
+@app.post("/api/chat/stop", dependencies=API)
+def stop_chat(body: StopRequest) -> JSONResponse:
+    """Stop a running turn. Idempotent: stopping a finished turn is not an error.
+
+    This is the only way a long turn ends early on purpose. Before it existed a
+    turn could only be abandoned by closing the tab, which also threw away the
+    half-written reply and any approval still pending in it.
+    """
+    if not body.turn_id:
+        return JSONResponse(
+            {"ok": False, "detail": "No turn to stop."}, status_code=status.HTTP_400_BAD_REQUEST
+        )
+    stopped = _stop_turn(body.turn_id)
+    return JSONResponse(
+        {
+            "ok": True,
+            "stopped": stopped,
+            "detail": "Stopping." if stopped else "That turn had already finished.",
+        }
+    )
+
+
 def _session_token(request: Request) -> str:
     """The token this request authenticated with, used to bind approvals."""
     return request.cookies.get(SESSION_COOKIE) or request.headers.get(TOKEN_HEADER, "")
@@ -752,14 +840,18 @@ def _streaming_chat(body: ChatRequest, cfg: dict, history: list[dict], session_t
     * failure — a single ``error`` carrying the text to show, then ``done``
       with ``ok: false`` and no text (it used to repeat the error, so the UI
       rendered every failure twice);
+    * stopped by the user — ``done`` with ``stopped: true``, and whatever the
+      model had already said stays on screen (it is not an error);
     * client gone — a bounded, non-blocking drain, so an abandoned turn cannot
       keep appending screenshots to a queue nobody reads.
+
+    The first event always carries the ``turn_id`` the Stop button posts back.
     """
     import queue as queue_mod
-    import threading
 
     q: queue_mod.Queue = queue_mod.Queue(maxsize=MAX_QUEUE_ITEMS)
     stop = threading.Event()
+    turn_id, turn = _register_turn(stop)
     outcome: dict[str, object] = {}
 
     def emit(etype: str, data: dict) -> None:
@@ -775,11 +867,13 @@ def _streaming_chat(body: ChatRequest, cfg: dict, history: list[dict], session_t
         try:
             text = run_agent_turn(
                 body.message.strip(), history, cfg, emit, session_token,
-                turn=Turn(stop_event=stop),
+                turn=turn,
             )
             outcome["text"] = text
         except TurnCancelled:
             outcome["cancelled"] = True
+            outcome["stopped"] = turn.cancelled_by_user
+            outcome["timed_out"] = turn.reason == "timeout"
         except Exception as exc:
             log.exception("agent turn failed")
             outcome["error"] = str(exc) or type(exc).__name__
@@ -788,6 +882,10 @@ def _streaming_chat(body: ChatRequest, cfg: dict, history: list[dict], session_t
 
     thread = threading.Thread(target=worker, daemon=True)
     thread.start()
+
+    # Tell the UI what to send back to /api/chat/stop before anything else, so a
+    # turn can be stopped even while the first model call is still in flight.
+    yield _sse("turn", {"turn_id": turn_id})
 
     try:
         while True:
@@ -804,10 +902,20 @@ def _streaming_chat(body: ChatRequest, cfg: dict, history: list[dict], session_t
             yield _sse(etype, data)
     finally:
         if thread.is_alive():
-            stop.set()  # tell the agent to abandon its next emit
+            # Nobody is reading this stream any more, so this is not the user
+            # pressing Stop: end silently rather than report a cancel.
+            turn.set_reason("disconnected")
+            stop.set()
             log.info("Client disconnected; turn abandoned")
+        _release_turn(turn_id, turn)
 
     if outcome.get("cancelled"):
+        if outcome.get("stopped"):
+            # A deliberate stop is not a failure: keep what was already said and
+            # say so, so the bubble does not look like a crash.
+            yield _sse("done", {"ok": True, "stopped": True, "text": ""})
+        elif outcome.get("timed_out"):
+            yield _sse("done", {"ok": True, "stopped": True, "timed_out": True, "text": ""})
         return
     if outcome.get("error"):
         message = f"Something went wrong: {outcome['error']}"

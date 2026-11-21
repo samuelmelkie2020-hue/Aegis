@@ -7,6 +7,7 @@
 const chatLog = document.getElementById("chatLog");
 const userInput = document.getElementById("userInput");
 const sendBtn = document.getElementById("sendBtn");
+const stopBtn = document.getElementById("stopBtn");
 const micBtn = document.getElementById("micBtn");
 const orbLabel = document.getElementById("orbLabel");
 const screenImg = document.getElementById("screenImg");
@@ -69,6 +70,8 @@ const heroTemplate = (document.getElementById("welcomeHero") || {}).outerHTML ||
 const state = {
   history: [],            // [{role, content}] — text-only conversation history
   busy: false,
+  turnId: "",             // server-issued id of the running turn (see /api/chat/stop)
+  stopping: false,        // Stop pressed; ignore anything still in flight
   live: false,            // live screen view on?
   liveTimer: null,
   liveLoop: null,         // the in-flight poll chain
@@ -336,6 +339,39 @@ function setScreenImage(b64) {
 // ---------------------------------------------------------------------------
 // Chat — send + SSE consume
 // ---------------------------------------------------------------------------
+// One place toggles "a turn is running": the Send button becomes Stop, so the
+// control is where the user is already looking, and the keyboard shortcut below
+// stays in sync with what is on screen.
+function setBusy(busy) {
+  state.busy = busy;
+  if (!busy) state.stopping = false;
+  sendBtn.classList.toggle("hidden", busy);
+  sendBtn.disabled = busy;
+  stopBtn.classList.toggle("hidden", !busy);
+  stopBtn.disabled = !busy || state.stopping;
+  stopBtn.textContent = state.stopping ? "Stopping…" : "Stop";
+}
+
+async function stopTurn() {
+  if (!state.busy) return;
+  // A turn that has not announced its id yet (the request is still in flight)
+  // is still stoppable: it will be marked on arrival and stopped immediately.
+  state.stopping = true;
+  setBusy(true);
+  if (!state.turnId) return;  // sendMessage stops it the moment the id arrives
+  try {
+    await api("/api/chat/stop", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ turn_id: state.turnId }),
+    });
+  } catch (err) {
+    toast(`Could not stop the turn: ${err.message || err}`);
+    state.stopping = false;
+    setBusy(true);
+  }
+}
+
 async function sendMessage(text, opts = {}) {
   const message = (text ?? userInput.value).trim();
   if (!message || state.busy) return;
@@ -346,8 +382,9 @@ async function sendMessage(text, opts = {}) {
     userInput.style.height = "auto";
   }
 
-  state.busy = true;
-  sendBtn.disabled = true;
+  state.turnId = "";
+  state.stopping = false;
+  setBusy(true);
   setOrb("thinking");
 
   const statusPill = addStatus("Thinking…");
@@ -384,6 +421,12 @@ async function sendMessage(text, opts = {}) {
         try { ev = JSON.parse(line.slice(6)); } catch { continue; }
 
         switch (ev.type) {
+          case "turn":
+            state.turnId = ev.turn_id || "";
+            // Stop was pressed while the request was still being set up.
+            if (state.stopping) stopTurn();
+            break;
+
           case "status":
             statusPill.querySelector("span:last-child").textContent = ev.message || "Working…";
             break;
@@ -434,6 +477,18 @@ async function sendMessage(text, opts = {}) {
 
           case "done":
             statusPill.remove();
+            if (ev.stopped) {
+              // A deliberate stop is not a failure: keep whatever was already
+              // said, and say plainly that it stopped.
+              const note = ev.timed_out
+                ? "⏱ Stopped — that took longer than five minutes."
+                : "⏹ Stopped at your request.";
+              if (!fullText) bubble.innerHTML = mdLite(note);
+              else bubble.innerHTML = mdLite(`${fullText}\n\n_${note}_`);
+              bubble.classList.add("is-stopped");
+              scrollBottom();
+              break;
+            }
             if (ev.ok === false) {
               if (!fullText) bubble.innerHTML = mdLite("⚠ That request failed.");
             } else if (ev.text && !fullText) {
@@ -453,8 +508,8 @@ async function sendMessage(text, opts = {}) {
     // appends the message itself, so pushing it early duplicated every turn.
     if (!opts.hiddenUser) state.history.push({ role: "user", content: message });
     state.history.push({ role: "assistant", content: fullText || "(no response)" });
-    state.busy = false;
-    sendBtn.disabled = false;
+    setBusy(false);
+    state.turnId = "";
     setOrb("idle");
     if (!opts.hiddenUser) userInput.focus();
     scrollBottom();
@@ -544,6 +599,15 @@ micBtn.addEventListener("click", () => {
 // Composer
 // ---------------------------------------------------------------------------
 sendBtn.addEventListener("click", () => sendMessage());
+stopBtn.addEventListener("click", () => stopTurn());
+
+// Esc stops the running turn — the same key that cancels anything else.
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape" || !state.busy) return;
+  if (!settingsModal.classList.contains("hidden")) return;  // the dialog handles Esc
+  e.preventDefault();
+  stopTurn();
+});
 
 userInput.addEventListener("keydown", (e) => {
   if (e.key === "Enter" && !e.shiftKey) {

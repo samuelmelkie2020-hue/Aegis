@@ -272,6 +272,17 @@ def test_the_update_card_is_hidden_until_there_is_an_update(html):
     assert "hidden" in tag, "an update banner must not sit there permanently"
 
 
+def test_a_hidden_element_stays_hidden_even_when_it_has_a_display_rule():
+    """`hidden` is a weak UA rule; a `display:` on the element beats it.
+
+    The update banner is a grid and starts `hidden`, so without an explicit rule
+    it was visible on load with nothing in it.
+    """
+    css = (STATIC / "style.css").read_text(encoding="utf-8")
+    assert ".update-card[hidden]" in css
+    assert ".hidden { display: none !important; }" in css
+
+
 def test_the_update_card_has_both_steps_and_a_dismiss(html):
     for button in ("updateGet", "updateInstall", "updateLater"):
         assert f'id="{button}"' in html, f"{button} is missing"
@@ -391,3 +402,49 @@ def test_the_local_panel_has_no_inline_styles(html):
     assert ".local-panel" in css
     assert ".pull-fill" in css
     assert ".model-chip" in css
+
+
+# ---------------------------------------------------------------------------
+# Stop button: the control must exist, be wired, and be reachable by keyboard
+# ---------------------------------------------------------------------------
+
+def test_the_stop_button_exists_and_starts_hidden(html):
+    tag = re.search(r'<button[^>]*id="stopBtn"[^>]*>', html).group(0)
+    assert "hidden" in tag, "Stop must not sit next to Send doing nothing"
+    assert 'aria-label="Stop this answer"' in tag
+
+
+def test_stop_posts_the_turn_id_the_server_announced():
+    js = (STATIC / "app.js").read_text(encoding="utf-8")
+    stop_fn = js[js.index("async function stopTurn"):]
+    stop_fn = stop_fn[: stop_fn.index("async function sendMessage")]
+    assert "/api/chat/stop" in stop_fn
+    assert "turn_id" in stop_fn
+    # The id comes from the stream, never from anything the page invents.
+    assert 'case "turn":' in js
+    assert "state.turnId = ev.turn_id" in js
+
+
+def test_send_and_stop_swap_in_the_same_place():
+    """One control, two jobs: a busy turn must not leave Send clickable."""
+    js = (STATIC / "app.js").read_text(encoding="utf-8")
+    body = js[js.index("function setBusy"):]
+    body = body[: body.index("async function stopTurn")]
+    assert 'sendBtn.classList.toggle("hidden", busy)' in body
+    assert 'stopBtn.classList.toggle("hidden", !busy)' in body
+    assert "stopBtn.disabled" in body
+
+
+def test_escape_stops_a_running_turn():
+    js = (STATIC / "app.js").read_text(encoding="utf-8")
+    assert 'if (e.key !== "Escape" || !state.busy) return;' in js
+    assert "stopTurn();" in js
+
+
+def test_a_stopped_reply_is_not_rendered_as_a_failure():
+    """Stopping is expected; showing ⚠ for it would read as a crash."""
+    js = (STATIC / "app.js").read_text(encoding="utf-8")
+    assert "ev.stopped" in js
+    assert "is-stopped" in js
+    css = (STATIC / "style.css").read_text(encoding="utf-8")
+    assert ".is-stopped" in css

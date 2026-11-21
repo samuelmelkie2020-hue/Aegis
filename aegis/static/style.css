@@ -398,6 +398,10 @@ body {
 
 /* ================= Updates ================= */
 
+/* `display: grid` would otherwise beat the `hidden` attribute's UA rule, and the
+   update banner would sit there permanently saying nothing. */
+.update-card[hidden] { display: none; }
+
 .update-card {
   display: grid;
   gap: 6px;
@@ -806,6 +810,17 @@ kbd {
   animation: pulse 1.2s infinite;
 }
 .send-btn { background: linear-gradient(135deg, rgba(0, 229, 255, 0.26), rgba(0, 229, 255, 0.1)); border-color: var(--c); color: #eaffff; }
+
+/* Stop replaces Send while a turn is running: same spot, different job. Red and
+   pulsing, because stopping something is not the calm default action. */
+.stop-btn { color: var(--red); border-color: rgba(255, 77, 94, 0.55); background: rgba(255, 77, 94, 0.12); }
+.stop-btn:hover { background: rgba(255, 77, 94, 0.22); border-color: var(--red); }
+.stop-btn:disabled { opacity: 0.6; cursor: default; animation: pulse 1.2s infinite; }
+.msg .bubble.is-stopped { border-left-color: var(--amber); color: var(--muted); }
+
+/* A hidden control must occupy no space either — `hidden` is used both as an
+   attribute (update card, local panel) and a class (Stop / Send swap). */
+.hidden { display: none !important; }
 
 #userInput {
   flex: 1;
