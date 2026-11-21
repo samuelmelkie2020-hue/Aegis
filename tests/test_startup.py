@@ -293,3 +293,22 @@ def test_the_window_proof_flag_is_accepted_by_the_parser():
     assert '"--window-proof"' in main_src
     assert "argparse.SUPPRESS" in main_src, "it is an assertion tool, not a feature"
     assert isinstance(ns.get("DEFAULT_HOST"), str)
+
+
+def test_the_spec_actually_executes_its_head_without_raising():
+    """The typelib collection used to reference `hiddenimports` before it existed.
+
+    A NameError there is silent: the build still "works", the bundle just has no
+    GTK, and the Linux app can never open a window. So execute the spec's head —
+    everything up to Analysis(), which needs PyInstaller's build machinery.
+    """
+    source = ENTRY.parent.joinpath("aegis.spec").read_text(encoding="utf-8")
+    head = source[: source.index("analysis = Analysis(")]
+    namespace = {"SPECPATH": str(ENTRY.parent), "__file__": str(ENTRY.parent / "aegis.spec")}
+    exec(compile(head, "aegis.spec", "exec"), namespace)  # noqa: S102 - a build file, executed as one
+
+    assert isinstance(namespace["datas"], list)
+    assert isinstance(namespace["hiddenimports"], list)
+    assert "_typelibs" in namespace
+    if sys.platform.startswith("linux"):
+        assert "gi.repository.Gtk" in namespace["hiddenimports"]
