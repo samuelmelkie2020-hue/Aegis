@@ -26,7 +26,7 @@ jobs:
           set +e
           python -m pytest -q > pytest-out.txt 2>&1
           echo "exit=$?"
-          set -e
+          Get-Content pytest-out.txt -Tail 40
           python - <<'PY'
           import re
           from pathlib import Path
