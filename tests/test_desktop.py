@@ -647,3 +647,77 @@ def test_a_test_double_never_blocks_on_a_browser_fallback(monkeypatch, tmp_path)
     started = __import__("time").monotonic()
     assert desktop.run_desktop(port=0) == 0
     assert __import__("time").monotonic() - started < 30
+
+
+# ---------------------------------------------------------------------------
+# The bug that made every platform fail: a keyword this pywebview does not have
+# ---------------------------------------------------------------------------
+
+def test_window_options_are_filtered_to_what_this_pywebview_accepts():
+    """`create_window(icon=...)` raised on every OS and no window ever opened.
+
+    `requirements.txt` allows pywebview 5.x and 6.x, and `icon` moved from
+    `create_window()` to `start()` between them. A cosmetic icon must not be able
+    to close the window.
+    """
+    import inspect
+    import sys
+
+    from aegis import desktop
+
+    webview = sys.modules.get("webview") or __import__("webview")
+    wanted = {"title": "Aegis", "icon": "/tmp/i.png", "nonsense": 1}
+    kept = desktop._supported_kwargs(webview.create_window, wanted)
+
+    create_params = inspect.signature(webview.create_window).parameters
+    assert "title" in kept
+    assert set(kept) <= set(create_params)
+    if "icon" not in create_params:
+        assert "icon" not in kept
+
+
+def test_an_unfiltered_keyword_is_exactly_what_broke_it():
+    """Pin the failure: passing an unknown keyword raises, filtering does not."""
+
+    def create_window(title, html):  # a 6.x-shaped signature
+        return {"title": title, "html": html}
+
+    from aegis import desktop
+
+    with pytest.raises(TypeError):
+        create_window(title="Aegis", html="x", icon="/tmp/i.png")
+
+    filtered = desktop._supported_kwargs(create_window, {"title": "Aegis", "html": "x", "icon": "/p"})
+    assert create_window(**filtered) == {"title": "Aegis", "html": "x"}
+
+
+def test_the_desktop_shell_opens_with_the_installed_pywebview_signature(monkeypatch):
+    """End to end against the *real* signature, not a fake one that accepts anything."""
+    import sys
+
+    from aegis import desktop
+
+    webview = __import__("webview")
+    recorded = {}
+    real_create = webview.create_window
+
+    def create_window(**kwargs):
+        # Enforce the real signature: an extra keyword must raise here, as it did.
+        import inspect
+
+        params = inspect.signature(real_create).parameters
+        if not any(p.kind is p.VAR_KEYWORD for p in params.values()):
+            unexpected = set(kwargs) - set(params)
+            assert not unexpected, f"unknown keyword(s): {sorted(unexpected)}"
+        recorded["window_kwargs"] = kwargs
+        return FakeWindow()
+
+    def start(**kwargs):
+        recorded["start_kwargs"] = kwargs
+
+    monkeypatch.setattr(webview, "create_window", create_window)
+    monkeypatch.setattr(webview, "start", start)
+    monkeypatch.setitem(sys.modules, "webview", webview)
+    assert desktop.run_desktop(port=0) == 0
+    assert recorded["window_kwargs"]["title"] == "Aegis"
+    assert recorded["start_kwargs"]["http_server"] is False

@@ -735,6 +735,30 @@ def _keep_serving(handle: ServerHandle, *, wait_forever: bool = False) -> bool:
     return True
 
 
+def _supported_kwargs(function, kwargs: dict) -> dict:
+    """Drop keywords this pywebview version does not accept.
+
+    ``create_window(icon=...)`` is the bug that made *every* platform fail to open
+    a window: ``icon`` moved to ``start()`` in a later pywebview, and requirements
+    allow a range of versions, so the build could get either. A cosmetic icon must
+    never be able to stop the app from opening, so unknown keywords are dropped
+    with a log line rather than raised.
+    """
+    try:
+        import inspect
+
+        parameters = inspect.signature(function).parameters
+    except (TypeError, ValueError):  # pragma: no cover - builtins, C functions
+        return kwargs
+    if any(p.kind is inspect.Parameter.VAR_KEYWORD for p in parameters.values()):
+        return kwargs
+    unsupported = [key for key in kwargs if key not in parameters]
+    if unsupported:
+        log.warning("This pywebview does not accept %s; opening without it", unsupported)
+        return {k: v for k, v in kwargs.items() if k in parameters}
+    return kwargs
+
+
 def _safe_window_step(step, *args, **kwargs) -> None:
     """Run one optional window step, and never let it abort startup.
 
@@ -817,18 +841,23 @@ def run_desktop(
     try:
         # Open on a page that explains itself. The app URL is swapped in once the
         # server answers, so a slow first paint is a message, not a blank window.
+        icon = window_icon_path()
         window = webview.create_window(
-            title=APP_NAME,
-            html=_STARTING_PAGE,
-            js_api=api,
-            width=WINDOW_WIDTH,
-            height=WINDOW_HEIGHT,
-            min_size=MIN_SIZE,
-            background_color=BROWSER_COLOR,
-            text_select=True,
-            zoomable=True,
-            confirm_close=True,
-            **({"icon": str(icon)} if (icon := window_icon_path()) else {}),
+            **_supported_kwargs(
+                webview.create_window,
+                {
+                    "title": APP_NAME,
+                    "html": _STARTING_PAGE,
+                    "js_api": api,
+                    "width": WINDOW_WIDTH,
+                    "height": WINDOW_HEIGHT,
+                    "min_size": MIN_SIZE,
+                    "background_color": BROWSER_COLOR,
+                    "text_select": True,
+                    "zoomable": True,
+                    "confirm_close": True,
+                },
+            )
         )
         api.attach(window, handle)
 
@@ -877,10 +906,16 @@ def run_desktop(
         try:
             _start_webview(
                 webview,
-                debug=debug,
-                private_mode=False,      # keep localStorage (voice prefs) between runs
-                **(_menu_option(webview, api)),
-                http_server=False,       # we serve from uvicorn, not pywebview
+                **_supported_kwargs(
+                    webview.start,
+                    {
+                        "debug": debug,
+                        "private_mode": False,   # keep localStorage (voice prefs)
+                        "http_server": False,    # uvicorn serves the app, not pywebview
+                        **_menu_option(webview, api),
+                        **({"icon": str(icon)} if icon else {}),
+                    },
+                ),
             )
         except Exception as exc:  # no WebView2/WebKitGTK, no display, backend refused
             _write_heartbeat(f"4/4 window could not be created: {exc}")
