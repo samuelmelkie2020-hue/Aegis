@@ -178,8 +178,68 @@ class Hardware:
         }
 
 
+# `detect_hardware()` shells out to nvidia-smi and PowerShell. On a cold Windows
+# start that can take many seconds — and a shelled-out process can even flash a
+# console window — which is fine when the user presses Refresh in Settings and
+# unacceptable on the path that opens the app. So the answer is cached per
+# process, and callers on a startup path use `probe_hardware()` with a deadline.
+_HARDWARE: Hardware | None = None
+_HARDWARE_LOCK = threading.Lock()
+
+HARDWARE_TIMEOUT = 20.0     # a full probe (GPU included) may take this long
+STARTUP_PROBE_TIMEOUT = 0.6  # the startup path only checks "is anything listening"
+
+
+def probe_hardware(timeout: float = HARDWARE_TIMEOUT) -> Hardware | None:
+    """Hardware from cache, or from a probe abandoned after ``timeout``.
+
+    Returns ``None`` rather than blocking. The abandoned probe keeps running in
+    the background, so by the time Settings is opened its answer is usually
+    cached — the slow case costs one wait, never two.
+    """
+    with _HARDWARE_LOCK:
+        if _HARDWARE is not None:
+            return _HARDWARE
+
+    def probe_and_remember() -> None:
+        # Cache from *inside* the worker, so an abandoned probe still leaves its
+        # answer behind. Otherwise the slow case is paid twice: once at startup
+        # and again when Settings opens.
+        global _HARDWARE
+        try:
+            found = detect_hardware()
+        except Exception:  # pragma: no cover - detect_hardware is total
+            return
+        with _HARDWARE_LOCK:
+            _HARDWARE = found
+
+    worker = threading.Thread(target=probe_and_remember, name="aegis-hardware", daemon=True)
+    worker.start()
+    worker.join(timeout)
+    # Either it finished inside the budget, or it is still running and the answer
+    # is not ready: in both cases the cache is the single source of truth.
+    return cached_hardware()
+
+
+def cached_hardware() -> Hardware | None:
+    """Only what has already been probed. Never starts a probe."""
+    with _HARDWARE_LOCK:
+        return _HARDWARE
+
+
+def reset_hardware_cache() -> None:
+    """Forget the cached probe (tests; or after a GPU driver install)."""
+    global _HARDWARE
+    with _HARDWARE_LOCK:
+        _HARDWARE = None
+
+
 def detect_hardware() -> Hardware:
-    """Read what this PC has. Never raises: unknown is a valid answer."""
+    """Read what this PC has. Never raises: unknown is a valid answer.
+
+    Slow — it shells out to nvidia-smi and PowerShell — so nothing on the startup
+    path may call it directly. Use :func:`probe_hardware`, which caches.
+    """
     info = Hardware(
         system=platform.system() or "",
         machine=platform.machine() or "",
@@ -408,7 +468,7 @@ def _ollama_version(base: str, *, timeout: float = PROBE_TIMEOUT) -> str:
     return ""
 
 
-def probe_servers(*, include: str | None = None) -> list[LocalServer]:
+def probe_servers(*, include: str | None = None, timeout: float | None = None) -> list[LocalServer]:
     """Check the known local servers, plus one the user configured."""
     endpoints = list(KNOWN_ENDPOINTS)
     if (
@@ -420,13 +480,13 @@ def probe_servers(*, include: str | None = None) -> list[LocalServer]:
 
     results: list[LocalServer] = []
     for name, base in endpoints:
-        models, error = list_models(base)
+        models, error = list_models(base, timeout=timeout if timeout is not None else LIST_TIMEOUT)
         reachable = not error
-        if not reachable and port_open(base):
+        if not reachable and port_open(base, timeout=timeout or PROBE_TIMEOUT):
             # The port answers but the model list did not. Still worth reporting:
             # the user can see something is there and the detail says what broke.
             reachable = True
-            version = _ollama_version(base)
+            version = _ollama_version(base, timeout=timeout or PROBE_TIMEOUT)
             error = (
                 f"{name} is answering on {origin(base)}"
                 + (f" (version {version})" if version else "")
@@ -447,15 +507,20 @@ def probe_servers(*, include: str | None = None) -> list[LocalServer]:
     return results
 
 
-def detect_running(*, include: str | None = None) -> LocalServer | None:
-    """The first reachable local server, or ``None``. Cheap: 1.5 s per endpoint."""
-    for server in probe_servers(include=include):
-        if server.reachable and server.models:
+def detect_running(
+    *, include: str | None = None, timeout: float = PROBE_TIMEOUT
+) -> LocalServer | None:
+    """The first reachable local server, or ``None``.
+
+    Probes each endpoint exactly once — it used to run the whole loop twice, which
+    doubled the startup cost of the common case (nothing is running). Servers
+    that have a model win over servers that are merely up.
+    """
+    servers = [s for s in probe_servers(include=include, timeout=timeout) if s.reachable]
+    for server in servers:
+        if server.models:
             return server
-    for server in probe_servers(include=include):
-        if server.reachable:
-            return server
-    return None
+    return servers[0] if servers else None
 
 
 # ---------------------------------------------------------------------------
@@ -467,14 +532,35 @@ def has_vision(name: str) -> bool:
     return any(marker in low for marker in VISION_MODELS)
 
 
-def recommend(hardware: Hardware | None = None, installed: list[str] | None = None) -> dict[str, Any]:
+def recommend(
+    hardware: Hardware | None = None,
+    installed: list[str] | None = None,
+    *,
+    timeout: float = 0.0,
+) -> dict[str, Any]:
     """Pick a model for this machine and say why, in plain terms.
 
     Preference order: something already installed (no download), then the largest
     vision model that fits comfortably, then a text-only one, then the smallest
     vision model regardless — a slow working model beats no model.
+
+    ``timeout=0`` (the default) never waits for a hardware probe: it uses what is
+    cached and otherwise assumes a modest machine. Settings passes a real timeout,
+    and the startup path must never spend seconds here.
     """
-    hardware = hardware or detect_hardware()
+    hardware = hardware or cached_hardware()
+    if hardware is None:
+        hardware = probe_hardware(timeout) if timeout > 0 else None
+    if hardware is None:
+        # Unknown is not a reason to guess big: a model that does not fit is a
+        # worse first impression than one that is merely smaller.
+        hardware = Hardware(
+            system=platform.system() or "",
+            machine=platform.machine() or "",
+            cpu="",
+            cores=os.cpu_count() or 0,
+            ram_gb=8.0,
+        )
     installed = installed or []
     budget = hardware.budget_gb
 
@@ -679,6 +765,11 @@ def adopt_local(cfg: dict[str, Any] | None = None) -> dict[str, Any]:
     never overwrites a *working* setup: a model on a local server, or a key for a
     remote one. That keeps "it was working yesterday" from turning into "it moved
     itself".
+
+    This runs before the window opens, so it is written to be *fast*: a loopback
+    connect with a 0.6 s budget per endpoint and no GPU probe. Anything slower
+    than that is a bug, not a trade-off — the app must not appear to hang because
+    a model server happened to be starting.
     """
     from .config import load_config, save_config
 
@@ -698,13 +789,16 @@ def adopt_local(cfg: dict[str, Any] | None = None) -> dict[str, Any]:
         return {"changed": False, "reason": "a remote provider is configured", "model": ""}
 
     try:
-        server = detect_running(include=base)
+        server = detect_running(include=base, timeout=STARTUP_PROBE_TIMEOUT)
     except Exception as exc:  # pragma: no cover - startup must never fail here
         return {"changed": False, "reason": f"probe failed: {exc}", "model": ""}
     if server is None or not server.models:
         return {"changed": False, "reason": "no local server running", "model": ""}
 
-    choice = recommend(detect_hardware(), server.models)
+    # No hardware probe here: the cache is used if Settings already filled it, and
+    # otherwise a modest machine is assumed. A wrong-but-working pick is better
+    # than a window that takes ten seconds to appear.
+    choice = recommend(None, server.models)
     if not choice.get("model"):
         return {"changed": False, "reason": "no model to choose", "model": ""}
     try:

@@ -71,19 +71,26 @@ def run_web(host: str, port: int, open_browser: bool) -> int:
     return 0
 
 
-def _adopt_local_model() -> None:
+def _adopt_local_model(*, timeout: float = 3.0) -> None:
     """Use a model already on this PC, so the app works with no setup at all.
 
-    Best effort: a missing or slow local server must not delay or crash startup.
+    Bounded on purpose: this runs before the server starts, and a model server
+    that is mid-launch must not delay the first page. Whatever happens, the app
+    opens; Settings → 💻 This computer has a Refresh button for the retry.
     """
-    try:
-        from aegis.local_llm import adopt_local
+    def work() -> None:
+        try:
+            from aegis.local_llm import adopt_local
 
-        result = adopt_local()
-        if result.get("changed"):
-            print(f"  ✓ {result.get('reason')} (no API key needed)")
-    except Exception:  # pragma: no cover - never block the app from starting
-        pass
+            result = adopt_local()
+            if result.get("changed"):
+                print(f"  ✓ {result.get('reason')} (no API key needed)")
+        except Exception:  # pragma: no cover - never block the app from starting
+            pass
+
+    worker = threading.Thread(target=work, name="aegis-adopt", daemon=True)
+    worker.start()
+    worker.join(timeout)
 
 
 def main(argv: list[str] | None = None) -> int:
