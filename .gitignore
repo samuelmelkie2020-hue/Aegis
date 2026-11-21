@@ -10,6 +10,7 @@ self-check.txt
 aegis-crash.log
 aegis-startup.log
 aegis-diagnose.txt
+aegis-open-me.txt
 
 # Python
 __pycache__/
