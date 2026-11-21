@@ -161,26 +161,35 @@ jobs:
           done
           ls -lh ../artifacts/*.zip
 
-      # A release without a published digest cannot be installed by the in-app
-      # updater (it verifies the download against GitHub's `digest` field before
-      # unpacking an executable), so the build fails loudly rather than shipping
-      # something the updater must refuse.
-      - name: Every asset must carry a SHA-256 digest
-        shell: bash
-        run: |
-          tag="${GITHUB_REF_NAME}"
-          gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json assets \
-            --jq '.assets[] | "\(.name)\t\(.digest)"' > digests.txt
-          echo "--- published assets ---"
-          cat digests.txt
-          if grep -qv 'sha256:' digests.txt; then
-            echo "::error::An asset has no digest; the in-app updater will refuse it."
-            exit 1
-          fi
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
       - uses: softprops/action-gh-release@v2
         with:
           files: artifacts/*.zip
           generate_release_notes: true
+
+      # Checked *after* uploading, because GitHub computes an asset's digest when
+      # it stores it. A release whose assets have no digest cannot be installed by
+      # the in-app updater — it verifies the download against that field before
+      # unpacking an executable — so a release that would silently be refused is
+      # failed here instead.
+      - name: Every asset must carry a SHA-256 digest
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          for attempt in 1 2 3 4 5; do
+            gh release view "$tag" --repo "$GITHUB_REPOSITORY" \
+              --json assets --jq '.assets[] | "\(.name)\t\(.digest)"' > digests.txt
+            if [ "$(wc -l < digests.txt)" -gt 0 ] && ! grep -qv 'sha256:' digests.txt; then
+              echo "--- all assets carry a digest ---"
+              cat digests.txt
+              exit 0
+            fi
+            echo "attempt $attempt: digests not ready yet"
+            sleep 5
+          done
+          echo "--- assets as published ---"
+          cat digests.txt
+          echo "::error::An asset has no digest; the in-app updater would refuse it."
+          exit 1
