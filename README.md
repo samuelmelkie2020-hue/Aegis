@@ -80,7 +80,8 @@ The web UI is the same app, and it is still handy for LAN use (see [Safety](#-sa
 | `--port N` | Fixed port instead of a free one (default `8000`) |
 | `--host H` | Bind address, e.g. `0.0.0.0` for LAN (default `127.0.0.1`) |
 | `--debug` | Verbose logging |
-| `--self-check` | Diagnose the install: frozen vs source, data dir, server start/stop, webview availability |
+| `--self-check` | Verify the install works: frozen vs source, data dir, server start/stop, webview availability |
+| `--diagnose` | Explain **why the window does not open**: WebView2 version, another copy on the port, pywebview, and the tail of any crash/startup log — with no key or token in the output, so it is safe to paste |
 
 ---
 
@@ -199,7 +200,7 @@ Environment variables:
 
 ```bash
 pip install -r requirements-dev.txt   # runtime deps + pytest + ruff
-python -m pytest -q                   # 259 tests, ~3s, no display or API key needed
+python -m pytest -q                   # 275 tests, ~3s, no display or API key needed
 ruff check .                          # lint (config lives in pyproject.toml)
 python run.py --self-check            # diagnose a machine: data dir, server, webview
 node --check aegis/static/app.js      # front-end syntax
@@ -331,7 +332,9 @@ Without an API key, a built-in **demo brain** handles simple intents so you can 
 | Port already in use | `python run.py --port 8080` (or `AEGIS_PORT=8080`) — the starters honour it too |
 | *"No module named webview"* | `pip install pywebview`; on Linux also install WebKitGTK. Or run `python run.py --web` |
 | Desktop window is blank / white | Check `aegis-crash.log` in the data folder; run `python run.py --self-check` and retry with `--debug` |
-| Desktop app won't start at all (Windows) | `aegis-crash.log` sits next to the exe's data folder (`%APPDATA%\Aegis`); the message box shows the reason |
+| **Nothing happens when I double-click `Aegis.exe`** | Run `Aegis.exe --diagnose` from a terminal (or PowerShell) and read the report — it names the cause instead of guessing. The three usual ones: **WebView2 is not installed** (fix below), **another copy is already running** (port 8000 in use — a second launch now says so instead of opening a blank window), or **antivirus quarantined the exe**. Every launch writes `%APPDATA%\Aegis\aegis-startup.log`, so the last line of that file says how far it got. |
+| *"Aegis needs Microsoft Edge WebView2"* | Install the free runtime once: <https://go.microsoft.com/fwlink/p/?LinkId=2124703> — it is preinstalled on Windows 11 and most Windows 10 PCs. `Aegis.exe --diagnose` tells you the installed version, or that there is none. |
+| Desktop window is blank / white | Check `aegis-crash.log` in the data folder; run `python run.py --self-check` and retry with `--debug` |
 | macOS says the app is damaged / from an unidentified developer | It is unsigned: right-click → **Open**, or `xattr -dr com.apple.quarantine /Applications/Aegis.app` |
 | Where are my settings? | `--self-check` prints the data folder: `%APPDATA%\Aegis`, `~/Library/Application Support/Aegis` or `~/.config/Aegis` |
 

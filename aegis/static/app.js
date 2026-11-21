@@ -1064,3 +1064,15 @@ setInterval(refreshStats, 3000);
 // ---------------------------------------------------------------------------
 loadSettings();
 refreshScreenImage();
+
+// The version comes from the server, so the footer cannot claim a build that
+// is not the one running (it said v1.0 for four releases).
+api("/api/health")
+  .then((r) => (r.ok ? r.json() : null))
+  .then((info) => {
+    const foot = document.getElementById("footNote");
+    if (info && info.version && foot) {
+      foot.textContent = `v${info.version} · local-first · your key stays on this PC`;
+    }
+  })
+  .catch(() => { /* the static text is fine */ });
