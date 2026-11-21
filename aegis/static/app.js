@@ -1417,7 +1417,8 @@ loadSettings().then(() => {
   // First run on a machine with no model: say what to do instead of leaving the
   // user to guess. Only once per load, and only while the demo brain is active.
   const llm = state.settings.llm || {};
-  if (isLocalBase(llm.base_url) && !llm.model) {
+  const noBrain = isLocalBase(llm.base_url) ? !llm.model : !llm.api_key_set;
+  if (noBrain) {
     addMessage(
       "assistant",
       "🛡 I'm running on the <b>demo brain</b> — I answer without any AI model, so my replies are limited.\n" +

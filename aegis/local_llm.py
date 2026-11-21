@@ -676,9 +676,9 @@ def adopt_local(cfg: dict[str, Any] | None = None) -> dict[str, Any]:
     """Point an unconfigured Aegis at a local server, once, at startup.
 
     Returns a plain dict describing what happened so the caller can log it. It
-    never overwrites a deliberate choice: if the user has a model name saved, or
-    a remote endpoint with a key, this does nothing but report. That keeps
-    "it was working yesterday" from turning into "it moved itself".
+    never overwrites a *working* setup: a model on a local server, or a key for a
+    remote one. That keeps "it was working yesterday" from turning into "it moved
+    itself".
     """
     from .config import load_config, save_config
 
@@ -687,9 +687,14 @@ def adopt_local(cfg: dict[str, Any] | None = None) -> dict[str, Any]:
     base = llm.get("base_url") or ""
     model = (llm.get("model") or "").strip()
 
-    if model:
+    has_key = bool((llm.get("api_key") or "").strip())
+    # "Configured" means it could actually answer: a model on a local server, or
+    # a key for a remote one. The pre-1.8 default (OpenAI, no key, gpt-4o-mini)
+    # could not, and leaving it would show a demo brain plus an API-key field the
+    # user has no key for — exactly the confusion this release removes.
+    if model and (is_local_url(base) or has_key):
         return {"changed": False, "reason": "a model is already selected", "model": model}
-    if base and not is_local_url(base):
+    if base and not is_local_url(base) and has_key:
         return {"changed": False, "reason": "a remote provider is configured", "model": ""}
 
     try:
