@@ -396,6 +396,62 @@ body {
 .toggle input:checked { border-color: var(--c); background: rgba(0, 229, 255, 0.16); }
 .toggle input:checked::after { transform: translateX(16px); background: var(--c); box-shadow: 0 0 10px var(--c); }
 
+/* ================= Updates ================= */
+
+.update-card {
+  display: grid;
+  gap: 6px;
+  padding: 10px 11px;
+  margin-bottom: 2px;
+  border: 1px solid rgba(0, 229, 255, 0.4);
+  background: linear-gradient(180deg, rgba(0, 229, 255, 0.1), rgba(0, 229, 255, 0.02));
+}
+
+.update-head { display: flex; align-items: center; gap: 7px; }
+.update-head strong {
+  font-family: var(--font-display);
+  font-size: 0.62rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--c);
+}
+
+.update-dot {
+  width: 6px; height: 6px; flex: none; border-radius: 50%;
+  background: var(--c);
+  box-shadow: 0 0 8px var(--c);
+  animation: livePulse 2s ease-in-out infinite;
+}
+
+/* Busy and failed both use the same card: one message, one place to look. */
+.update-card.busy .update-dot { animation: none; opacity: 0.5; }
+.update-card.failed { border-color: rgba(255, 77, 109, 0.55); }
+.update-card.failed .update-dot { background: #ff4d6d; box-shadow: none; animation: none; }
+.update-card.failed .update-head strong { color: #ff8fa3; }
+
+.update-detail {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.74rem;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.update-actions { display: flex; gap: 6px; align-items: center; }
+.update-btn { width: auto; padding: 0 10px; min-width: 30px; }
+
+.link-btn {
+  appearance: none;
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  color: var(--c-dim);
+  cursor: pointer;
+  text-decoration: underline dotted;
+}
+.link-btn:hover, .link-btn:focus-visible { color: var(--c); }
+
 .foot-note {
   color: var(--faint);
   font-family: var(--font-display);

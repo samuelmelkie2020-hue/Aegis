@@ -732,7 +732,25 @@ def execute_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
     return redact_result(result)
 
 
+def install_update(args: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Install the staged update. Reached only by redeeming an approval.
+
+    Not part of the model's tool list on purpose: the agent must not be able to
+    replace its own executable. It exists here because the approval reducer
+    dispatches through the same toolbox, and the two-step redeem is what makes
+    the install deliberate (see aegis.updates).
+    """
+    from . import updates
+
+    result = updates.apply_staged_update()
+    if not result.get("ok"):
+        return _fail(str(result.get("detail") or "The update could not be installed."))
+    return {"ok": True, "result": str(result.get("detail") or "Installing now.")}
+
+
 def _dispatch(name: str, args: dict[str, Any]) -> dict[str, Any]:
+    if name == "install_update":
+        return install_update(args)
     if name == "see_screen":
         return see_screen()
     if name == "run_command":

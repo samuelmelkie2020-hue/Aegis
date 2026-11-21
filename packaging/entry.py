@@ -272,6 +272,16 @@ def main() -> int:
         run_main = _load_run_py()
 
     try:
+        # Housekeeping from a previous update: helper scripts cannot delete
+        # themselves safely (see aegis.updates.prune_helpers).
+        from aegis.updates import prune_helpers
+
+        for name in prune_helpers():
+            _write(f"pruned update helper: {name}")
+    except Exception:
+        _write("prune: skipped")
+
+    try:
         _write("app:      handing over to run.py")
         return run_main()
     except SystemExit as exc:  # argparse --help, --self-check, etc.
