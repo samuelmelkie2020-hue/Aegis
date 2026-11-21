@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import logging
 import os
+import platform
 import socket
 import sys
 import threading
@@ -326,6 +327,150 @@ def self_check() -> int:
     return 1 if problems else 0
 
 
+def _webview2_version() -> str | None:
+    """The installed Edge WebView2 runtime version, or ``None`` when absent.
+
+    Duplicated from the frozen bootstrap (packaging/entry.py) on purpose: that
+    file must run before the application imports, so it cannot import this one.
+    """
+    if not sys.platform.startswith("win"):
+        return None
+    try:
+        import winreg
+    except ImportError:  # pragma: no cover - only reachable on Windows
+        return None
+
+    guide = r"Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
+    for root, prefix in (
+        (winreg.HKEY_LOCAL_MACHINE, "SOFTWARE\\WOW6432Node\\"),
+        (winreg.HKEY_LOCAL_MACHINE, "SOFTWARE\\"),
+        (winreg.HKEY_CURRENT_USER, "SOFTWARE\\"),
+    ):
+        try:
+            with winreg.OpenKey(root, prefix + guide) as key:
+                version = winreg.QueryValueEx(key, "pv")[0]
+        except OSError:
+            continue
+        except Exception:  # noqa: BLE001 - a registry read must never be fatal
+            continue
+        if version and version != "0.0.0.0":
+            return version
+    return None
+
+
+def diagnose() -> int:
+    """A shareable report for "it does not open".
+
+    Deliberately not a pass/fail check like ``--self-check``: the question here
+    is *why* nothing appeared, so it prints the facts a maintainer needs — the
+    webview backend, whether WebView2 is present, whether another copy already
+    holds the port, and whether a crash or startup log exists — and says which
+    of them is the likely culprit.
+    """
+    _ensure_streams()
+    report: list[str] = []
+
+    def say(line: str = "") -> None:
+        report.append(line)
+        print(line)
+
+    from . import __version__
+
+    say(f"Aegis {__version__} — startup diagnosis")
+    say(f"  python:      {sys.version.split()[0]}")
+    say(f"  platform:    {platform_description()}")
+    say(f"  frozen:      {is_frozen_bundle()}")
+    say(f"  executable:  {sys.executable}")
+
+    try:
+        from .config import CONFIG_PATH, user_data_dir
+
+        say(f"  data dir:    {user_data_dir()}")
+        say(f"  settings:    {CONFIG_PATH}")
+        writable = "yes"
+        try:
+            probe = user_data_dir() / ".write-probe"
+            probe.write_text("ok", encoding="utf-8")
+            probe.unlink()
+        except Exception as exc:
+            writable = f"NO ({exc})"
+        say(f"  writable:    {writable}")
+    except Exception as exc:
+        say(f"  data dir:    unavailable ({exc})")
+
+    try:
+        import webview
+
+        say(f"  pywebview:   {getattr(webview, '__version__', 'installed')}")
+    except Exception as exc:
+        say(f"  pywebview:   MISSING ({exc})")
+        say("")
+        say("→ Install it: pip install pywebview")
+
+    if sys.platform.startswith("win"):
+        version = _webview2_version()
+        say(f"  WebView2:    {version or 'NOT FOUND'}")
+        if not version:
+            say("")
+            say("→ This is the usual cause of 'nothing happens' on Windows.")
+            say("  Install it once (free, ~2 MB):")
+            say("  https://go.microsoft.com/fwlink/p/?LinkId=2124703")
+
+    port = int(os.environ.get("AEGIS_PORT", "8000"))
+    busy = _port_in_use(port)
+    say(f"  port {port}:   {'IN USE — another copy is probably running' if busy else 'free'}")
+    if busy:
+        say("")
+        say("→ Close the other Aegis window, or start this one with a different port:")
+        say(f"  Aegis.exe --web --port {port + 1}")
+
+    try:
+        from .config import user_data_dir as dir_for_logs
+
+        for name in ("aegis-crash.log", "aegis-startup.log", "self-check.txt"):
+            path = dir_for_logs() / name
+            if path.exists():
+                say(f"  {name}: {path}")
+                if name.endswith(("crash.log", "startup.log")):
+                    say("")
+                    say(f"  --- last lines of {name} ---")
+                    for line in path.read_text(encoding="utf-8", errors="replace").splitlines()[-8:]:
+                        say(f"  {line}")
+                    say(f"  --- end of {name} ---")
+                    say("")
+    except Exception:  # pragma: no cover - diagnostics must never raise
+        pass
+
+    say("")
+    say("Copy this report when asking for help. It contains no API key and no token.")
+    try:
+        from .config import user_data_dir as dir_for_logs
+
+        (dir_for_logs() / "aegis-diagnose.txt").write_text("\n".join(report) + "\n", encoding="utf-8")
+    except Exception:  # pragma: no cover
+        pass
+    return 0
+
+
+def platform_description() -> str:
+    return f"{platform.system()} {platform.release()} ({platform.machine()})"
+
+
+def is_frozen_bundle() -> bool:
+    return bool(getattr(sys, "frozen", False))
+
+
+def _port_in_use(port: int) -> bool:
+    probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    probe.settimeout(0.4)
+    try:
+        return probe.connect_ex(("127.0.0.1", port)) == 0
+    except OSError:
+        return False
+    finally:
+        probe.close()
+
+
 def _write_report(report: list[str]) -> None:
     """Persist the self-check output: windowed builds have no console to read."""
     try:
@@ -405,6 +550,29 @@ def _swallow(func) -> None:
         log.warning("Error window failed", exc_info=True)
 
 
+def _start_webview(webview, **options) -> None:
+    """Run the webview event loop, and never return silently without a window.
+
+    pywebview reports a missing or broken backend in two ways: it raises, or —
+    on Windows when WebView2 cannot initialise — it logs a warning and returns
+    *without ever opening a window*. The second case is the bug report we kept
+    getting: the process is alive, the server is on port 8000 and answering,
+    and the user sees nothing at all. So if ``start()`` returns and no window
+    was ever created, that is treated as a failure with a real message.
+    """
+    webview.start(**options)
+    try:
+        open_windows = len(webview.windows)
+    except Exception:  # pragma: no cover - older pywebview
+        return
+    if open_windows == 0:
+        raise RuntimeError(
+            "The desktop window could not be created. This is almost always a "
+            "missing WebView2 runtime on Windows, or a missing WebKitGTK on "
+            "Linux — see the startup log for the backend's own message."
+        )
+
+
 def run_desktop(*, port: int | None = None, debug: bool = False) -> int:
     """Start the server, open the desktop window, and block until it closes."""
     _ensure_streams()
@@ -457,7 +625,8 @@ def run_desktop(*, port: int | None = None, debug: bool = False) -> int:
         print(f"\n  🛡 Aegis is running as a desktop app (port {chosen}).")
         print("     Close the window to quit.\n")
 
-        webview.start(
+        _start_webview(
+            webview,
             debug=debug,
             private_mode=False,          # keep localStorage (voice prefs) between runs
             menu=_menu(api),

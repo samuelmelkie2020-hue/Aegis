@@ -96,6 +96,11 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="verify this build can start, without opening a window (used by CI)",
     )
+    parser.add_argument(
+        "--diagnose",
+        action="store_true",
+        help="print a shareable report explaining why the window does not open",
+    )
     args = parser.parse_args(argv)
 
     port = args.port if args.port is not None else int(os.environ.get("AEGIS_PORT", "8000"))
@@ -104,6 +109,11 @@ def main(argv: list[str] | None = None) -> int:
         from aegis.desktop import self_check
 
         return self_check()
+
+    if args.diagnose:
+        from aegis.desktop import diagnose
+
+        return diagnose()
 
     if args.web:
         host = args.host or os.environ.get("AEGIS_HOST", DEFAULT_HOST)

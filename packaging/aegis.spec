@@ -36,6 +36,10 @@ icon = str(_icon_file) if _icon_file.exists() else None
 
 datas = [
     (str(ROOT / "aegis" / "static"), "aegis/static"),  # includes aegis.png (window icon)
+    # The bootstrap locates the real entry point at runtime. Carrying it as data
+    # is what makes --self-check and --diagnose work in the *frozen* build,
+    # which is exactly when a user needs them.
+    (str(ROOT / "run.py"), "."),
 ]
 # psutil ships a small binary shim; pywebview/uvicorn need their submodules named
 # explicitly because they are imported lazily at runtime.
@@ -64,8 +68,10 @@ excludes = [
     "matplotlib", "numpy", "pandas", "scipy", "IPython", "pytest", "ruff",
 ]
 
+# The bootstrap, not run.py: a windowed build has no console, so anything that
+# fails before a window exists must still leave a log and a dialog behind.
 analysis = Analysis(  # noqa: F821
-    [str(ROOT / "run.py")],
+    [str(ROOT / "packaging" / "entry.py")],
     pathex=[str(ROOT)],
     binaries=[],
     datas=datas,
