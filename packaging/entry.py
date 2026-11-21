@@ -254,13 +254,10 @@ def main() -> int:
             return 1
 
     if len(sys.argv) == 1 and _already_running():
-        _write("port 8000 is already in use: another copy is probably running")
-        _crash(
-            "Another Aegis is already running (port 8000 is in use).\n\n"
-            "Open the window you already have, or close it and try again.",
-            None,
-        )
-        return 1
+        # Not fatal any more. The app already picks another port when one is
+        # busy, so refusing to start turned "open a second window" into "it does
+        # not open" — with no window to explain the difference.
+        _write("port 8000 is in use: starting on another port instead")
 
     try:
         from run import main as run_main
@@ -283,6 +280,7 @@ def main() -> int:
 
     try:
         _write("app:      handing over to run.py")
+        _write("app:      importing the server and opening the window")
         return run_main()
     except SystemExit as exc:  # argparse --help, --self-check, etc.
         _write(f"app:      exited with {exc.code}")

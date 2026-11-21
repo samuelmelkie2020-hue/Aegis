@@ -84,21 +84,47 @@ class ServerHandle:
         return f"http://127.0.0.1:{self.port}"
 
 
-def _adopt_local_model() -> None:
+def _adopt_local_model(*, timeout: float = 3.0) -> None:
     """Pick up a model that is already installed on this PC, if any.
 
-    Runs before the window opens so the first greeting uses a real model instead
-    of the offline brain. Silent on failure — starting the app is more important
-    than detecting a model, and Settings has a Refresh button for the retry.
+    This used to block the window from opening. It must not: on a Windows machine
+    it shells out to a model server the user may have just started, and any delay
+    here reads as "it did not open". It now runs on a daemon thread with its own
+    deadline, and gives up quietly — the Settings panel has a Refresh button, and
+    the app is perfectly usable in demo mode meanwhile.
+    """
+    def work() -> None:
+        try:
+            from .local_llm import adopt_local
+
+            result = adopt_local()
+            if result.get("changed"):
+                log.info("Local model: %s", result.get("reason"))
+        except Exception:  # pragma: no cover - startup must not depend on this
+            log.debug("Local model detection skipped", exc_info=True)
+
+    worker = threading.Thread(target=work, name="aegis-adopt", daemon=True)
+    worker.start()
+    worker.join(timeout)  # a short courtesy wait, never a requirement
+
+
+def _write_heartbeat(stage: str) -> None:
+    """Record how far startup got, for the "it does not open" case.
+
+    A windowed build has no console, so without this the only evidence is a
+    crash log that says nothing at all when the failure is a hang. Each line is
+    flushed immediately: the process may never get another chance.
     """
     try:
-        from .local_llm import adopt_local
+        from .config import DATA_DIR
 
-        result = adopt_local()
-        if result.get("changed"):
-            log.info("Local model: %s", result.get("reason"))
-    except Exception:  # pragma: no cover - startup must not depend on this
-        log.debug("Local model detection skipped", exc_info=True)
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        stamp = time.strftime("%Y-%m-%d %H:%M:%S")
+        with open(DATA_DIR / "aegis-startup.log", "a", encoding="utf-8") as handle:
+            handle.write(f"{stamp}  {stage}\n")
+            handle.flush()
+    except Exception:  # pragma: no cover - a diagnostic must never fail
+        pass
 
 
 def start_server(port: int, *, log_level: str = "warning") -> ServerHandle:
@@ -334,6 +360,17 @@ def self_check() -> int:
     except Exception as exc:
         problems.append(f"pywebview not available: {exc}")
 
+    # The default brain is a local one, so a build where that module cannot even
+    # be imported would open a window that can never think. Check it here rather
+    # than discovering it when the user presses Save.
+    try:
+        from . import local_llm
+
+        hardware = local_llm.cached_hardware()  # never probes: --self-check must stay fast
+        say(f"  local model: {'cached' if hardware else 'not probed (ok)'}")
+    except Exception as exc:
+        problems.append(f"local model module failed to import: {exc}")
+
     if problems:
         say("\nFAILED:")
         for problem in problems:
@@ -433,19 +470,49 @@ def diagnose() -> int:
             say("  Install it once (free, ~2 MB):")
             say("  https://go.microsoft.com/fwlink/p/?LinkId=2124703")
 
+    # How far did the last launch actually get? This is the difference between
+    # "it crashed", "it hung" and "it opened and the window was invisible".
+    try:
+        from .config import DATA_DIR as dir_for_logs
+
+        progress = dir_for_logs / "aegis-startup.log"
+        if progress.exists():
+            lines = progress.read_text(encoding="utf-8", errors="replace").splitlines()
+            last = [ln for ln in lines if ln.strip()][-12:]
+            say(f"  startup log: {progress}")
+            say("")
+            say("  --- how far the last launch got ---")
+            for line in last:
+                say(f"  {line}")
+            say("  --- end ---")
+            if last:
+                final = last[-1]
+                if "4/4" in final.split("  ")[-1]:
+                    say("")
+                    say("→ It reached the window. If you saw nothing, WebView2 is the suspect below.")
+                elif "FAILED" in final:
+                    say("")
+                    say("→ It failed starting the server; the crash log below has the reason.")
+                else:
+                    say("")
+                    say("→ It stopped before creating a window (stage above).")
+            say("")
+    except Exception:  # pragma: no cover - diagnostics must never raise
+        pass
+
     port = int(os.environ.get("AEGIS_PORT", "8000"))
     busy = _port_in_use(port)
     say(f"  port {port}:   {'IN USE — another copy is probably running' if busy else 'free'}")
     if busy:
         say("")
-        say("→ Close the other Aegis window, or start this one with a different port:")
-        say(f"  Aegis.exe --web --port {port + 1}")
+        say("→ Another copy is already running (that is fine — Aegis opens on a free port).")
+        say("  Look for an existing Aegis window, behind other windows or on another desktop.")
 
     try:
-        from .config import user_data_dir as dir_for_logs
+        from .config import DATA_DIR as dir_for_logs
 
-        for name in ("aegis-crash.log", "aegis-startup.log", "self-check.txt"):
-            path = dir_for_logs() / name
+        for name in ("aegis-crash.log", "self-check.txt"):
+            path = dir_for_logs / name
             if path.exists():
                 say(f"  {name}: {path}")
                 if name.endswith(("crash.log", "startup.log")):
@@ -458,12 +525,26 @@ def diagnose() -> int:
     except Exception:  # pragma: no cover - diagnostics must never raise
         pass
 
+    try:
+        from . import local_llm
+        from .config import load_config as _load
+
+        llm = (_load().get("llm") or {})
+        say(f"  model:       {llm.get('model') or '(none)'} @ {llm.get('base_url') or '?'}")
+        say(f"  local brain: {'yes' if llm.get('local') else 'no (cloud provider)'}")
+        server = local_llm.detect_running(include=llm.get("base_url") or "", timeout=0.8)
+        say(
+            f"  local server: {server.name + ' on ' + server.base_url if server else 'none running'}"
+        )
+    except Exception as exc:  # pragma: no cover - diagnostics must never raise
+        say(f"  model:       unavailable ({exc})")
+
     say("")
     say("Copy this report when asking for help. It contains no API key and no token.")
     try:
-        from .config import user_data_dir as dir_for_logs
+        from .config import DATA_DIR as dir_for_logs
 
-        (dir_for_logs() / "aegis-diagnose.txt").write_text("\n".join(report) + "\n", encoding="utf-8")
+        (dir_for_logs / "aegis-diagnose.txt").write_text("\n".join(report) + "\n", encoding="utf-8")
     except Exception:  # pragma: no cover
         pass
     return 0
@@ -610,18 +691,24 @@ def run_desktop(*, port: int | None = None, debug: bool = False) -> int:
     if chosen != preferred:
         log.warning("Port %s was busy; using %s instead", preferred, chosen)
 
+    _write_heartbeat(f"1/4 starting (port {chosen}, frozen={is_frozen_bundle()})")
     _adopt_local_model()
+    _write_heartbeat("2/4 local model checked")
     try:
         handle = start_server(chosen)
     except Exception as exc:
+        _write_heartbeat(f"2/4 FAILED to start the server: {exc}")
         _report_fatal(exc, page=_error_page)
         return 1
+    _write_heartbeat("3/4 server answering")
 
     api = DesktopAPI()
     try:
+        # Open on a page that explains itself. The app URL is swapped in once the
+        # server answers, so a slow first paint is a message, not a blank window.
         window = webview.create_window(
             title=APP_NAME,
-            url=f"{handle.base_url}/?token={get_token()}",
+            html=_STARTING_PAGE,
             js_api=api,
             width=WINDOW_WIDTH,
             height=WINDOW_HEIGHT,
@@ -633,6 +720,12 @@ def run_desktop(*, port: int | None = None, debug: bool = False) -> int:
             **({"icon": str(icon)} if (icon := window_icon_path()) else {}),
         )
         api.attach(window, handle)
+
+        # Swap the "starting" page for the app. Everything has already answered by
+        # now (start_server polls /api/health), so this is a navigation to a server
+        # that is definitely listening — the failure mode that matters is a user
+        # staring at a white window wondering whether anything happened.
+        _navigate_when_ready(window, f"{handle.base_url}/?token={get_token()}")
 
         # The page also asks for these via JS so the browser build stays unaware.
         try:
@@ -651,6 +744,7 @@ def run_desktop(*, port: int | None = None, debug: bool = False) -> int:
         destroy = getattr(window, "destroy", None)
         updates.register_restart_hook(destroy if callable(destroy) else None)
 
+        _write_heartbeat("4/4 window created")
         print(f"\n  🛡 Aegis is running as a desktop app (port {chosen}).")
         print("     Close the window to quit.\n")
 
@@ -667,6 +761,47 @@ def run_desktop(*, port: int | None = None, debug: bool = False) -> int:
     finally:
         stop_server(handle)
     return 0
+
+
+def _navigate_when_ready(window, url: str, *, attempts: int = 40) -> None:
+    """Point the window at the app, retrying briefly if the navigation is refused.
+
+    Runs on a daemon thread because ``create_window`` returns before the window
+    itself exists; a failure here must never take the app down. If every attempt
+    fails the window keeps the page that explains what to do.
+    """
+    def work() -> None:
+        for _ in range(attempts):
+            try:
+                window.load_url(url)
+                return
+            except Exception:  # the window is not ready yet
+                time.sleep(0.25)
+
+    threading.Thread(target=work, name="aegis-navigate", daemon=True).start()
+
+
+_STARTING_PAGE = """<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Aegis</title>
+<style>
+  body { margin:0; min-height:100vh; display:grid; place-items:center;
+         background:#060b16; color:#e6edf7;
+         font:16px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width:32rem; padding:2rem; text-align:center; }
+  h1 { font-size:1.3rem; margin:0 0 .6rem; }
+  p { margin:.4rem 0; color:#9fb0c9; }
+  .dots::after { content:"…"; animation: blink 1.2s steps(2, start) infinite; }
+  @keyframes blink { to { visibility:hidden; } }
+  code { background:#0f172a; border:1px solid #24314a; border-radius:.4rem;
+         padding:.1rem .35rem; color:#7fe7ff; }
+</style></head>
+<body><main>
+  <h1>Aegis is starting<span class="dots"></span></h1>
+  <p>This page is replaced as soon as the app answers.</p>
+  <p>If it stays here, close the window and run
+     <code>Aegis.exe --diagnose</code> — it writes a report that explains why,
+     with no key or token in it.</p>
+</main></body></html>"""
 
 
 _ERROR_PAGE = """<!doctype html>

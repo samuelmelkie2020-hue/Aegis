@@ -277,7 +277,7 @@ def test_adopt_local_wires_up_an_installed_model(sandbox, monkeypatch):
     monkeypatch.setattr(
         local_llm,
         "detect_running",
-        lambda include=None: local_llm.LocalServer(
+        lambda include=None, timeout=1.5: local_llm.LocalServer(
             name="Ollama", base_url="http://127.0.0.1:11434", models=["llava:7b"], reachable=True
         ),
     )
@@ -296,7 +296,7 @@ def test_adopt_local_leaves_a_saved_model_alone(sandbox, monkeypatch):
     monkeypatch.setattr(
         local_llm,
         "detect_running",
-        lambda include=None: pytest.fail("must not probe when a model is saved"),
+        lambda include=None, timeout=1.5: pytest.fail("must not probe when a model is saved"),
     )
     result = local_llm.adopt_local()
     assert result["changed"] is False
@@ -307,7 +307,7 @@ def test_adopt_local_never_overwrites_a_remote_provider(sandbox, monkeypatch):
     config.save_config(
         {"llm": {"base_url": "https://api.openai.com/v1", "model": "", "api_key": "sk-x"}}
     )
-    def must_not_probe(include=None):
+    def must_not_probe(include=None, timeout=1.5):
         pytest.fail("a remote provider must be left alone, not probed")
 
     monkeypatch.setattr(local_llm, "detect_running", must_not_probe)
@@ -328,7 +328,7 @@ def test_adopt_local_replaces_the_old_keyless_cloud_default(sandbox, monkeypatch
     monkeypatch.setattr(
         local_llm,
         "detect_running",
-        lambda include=None: local_llm.LocalServer(
+        lambda include=None, timeout=1.5: local_llm.LocalServer(
             name="Ollama", base_url="http://127.0.0.1:11434", models=["llava:7b"], reachable=True
         ),
     )
@@ -341,14 +341,14 @@ def test_adopt_local_replaces_the_old_keyless_cloud_default(sandbox, monkeypatch
 
 def test_adopt_local_is_quiet_when_nothing_is_running(sandbox, monkeypatch):
     config.save_config({"llm": {"base_url": "http://127.0.0.1:11434/v1", "model": ""}})
-    monkeypatch.setattr(local_llm, "detect_running", lambda include=None: None)
+    monkeypatch.setattr(local_llm, "detect_running", lambda include=None, timeout=1.5: None)
     assert local_llm.adopt_local()["changed"] is False
 
 
 def test_adopt_local_survives_a_probe_that_raises(sandbox, monkeypatch):
     config.save_config({"llm": {"base_url": "http://127.0.0.1:11434/v1", "model": ""}})
 
-    def boom(include=None):
+    def boom(include=None, timeout=1.5):
         raise RuntimeError("probe exploded")
 
     monkeypatch.setattr(local_llm, "detect_running", boom)
@@ -557,7 +557,7 @@ def test_local_setup_saves_a_working_local_config(client, monkeypatch):
     monkeypatch.setattr(
         local_llm,
         "detect_running",
-        lambda include=None: local_llm.LocalServer(
+        lambda include=None, timeout=1.5: local_llm.LocalServer(
             name="Ollama", base_url="http://127.0.0.1:11434", models=["qwen2.5vl:3b"], reachable=True
         ),
     )
@@ -572,7 +572,7 @@ def test_local_setup_saves_a_working_local_config(client, monkeypatch):
 
 def test_local_setup_explains_what_to_install_when_nothing_runs(client, monkeypatch):
     http, auth = client
-    monkeypatch.setattr(local_llm, "detect_running", lambda include=None: None)
+    monkeypatch.setattr(local_llm, "detect_running", lambda include=None, timeout=1.5: None)
     response = http.post("/api/local/setup", headers=auth)
     assert response.status_code == 409
     detail = response.json()["detail"]
@@ -585,7 +585,7 @@ def test_local_setup_does_not_save_without_a_model(client, monkeypatch):
     monkeypatch.setattr(
         local_llm,
         "detect_running",
-        lambda include=None: local_llm.LocalServer(
+        lambda include=None, timeout=1.5: local_llm.LocalServer(
             name="Ollama", base_url="http://127.0.0.1:11434", models=[], reachable=True
         ),
     )
@@ -600,7 +600,7 @@ def test_local_setup_does_not_save_without_a_model(client, monkeypatch):
 def test_local_setup_survives_a_probe_explosion(client, monkeypatch):
     http, auth = client
 
-    def boom(include=None):
+    def boom(include=None, timeout=1.5):
         raise RuntimeError("probe exploded")
 
     monkeypatch.setattr(local_llm, "detect_running", boom)

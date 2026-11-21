@@ -168,6 +168,11 @@ class FakeWindow:
         self.minimized = False
         self.evaluated: list[str] = []
         self.exposed = []
+        self.loaded_urls: list[str] = []
+
+    def load_url(self, url):
+        """The real app opens on a "starting" page and swaps in the app URL."""
+        self.loaded_urls.append(url)
 
     def show(self):
         self.shown = True
@@ -252,20 +257,32 @@ def fake_webview(monkeypatch):
     class Window(FakeWindow):
         pass
 
+    created: list[Window] = []
+
     def create_window(**kwargs):
         recorded["window_kwargs"] = kwargs
-        return Window()
+        window = Window()
+        created.append(window)
+        recorded["window"] = window
+        return window
 
     def start(**kwargs):
         recorded["start_kwargs"] = kwargs
-        recorded["url_opened"] = recorded["window_kwargs"].get("url")
-        # emulate a quick visit so we can assert the token handshake
-        import urllib.request
+        # The window opens on a local "starting" page and is navigated to the app
+        # once the server answers, so that is where the token handshake lives.
+        import time
 
-        try:
-            urllib.request.urlopen(recorded["url_opened"], timeout=5)
-        except Exception:
-            pass
+        deadline = time.time() + 5
+        while not created[0].loaded_urls and time.time() < deadline:
+            time.sleep(0.02)
+        recorded["url_opened"] = created[0].loaded_urls[0] if created[0].loaded_urls else None
+        if recorded["url_opened"]:
+            import urllib.request
+
+            try:
+                urllib.request.urlopen(recorded["url_opened"], timeout=5)
+            except Exception:
+                pass
 
     module.create_window = create_window
     module.start = start

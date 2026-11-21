@@ -88,10 +88,16 @@ def test_a_missing_webview2_runtime_is_named_with_a_fix(needle):
     assert needle in _entry_source()
 
 
-def test_a_second_launch_says_so_instead_of_opening_a_broken_window():
+def test_a_second_launch_opens_another_window_instead_of_refusing():
+    """A busy port used to be fatal, so a second double-click did nothing at all.
+
+    The app already picks a free port; refusing to start was what made "it does
+    not open" true.
+    """
     source = _entry_source()
     assert "_already_running()" in source
-    assert "already running" in source.lower()
+    assert "starting on another port instead" in source
+    assert "_crash(\n            \"Another Aegis is already running" not in source
 
 
 def test_a_backend_that_never_opens_a_window_is_a_failure():
