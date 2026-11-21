@@ -316,6 +316,29 @@ def test_adopt_local_never_overwrites_a_remote_provider(sandbox, monkeypatch):
     assert config.load_config()["llm"]["base_url"] == "https://api.openai.com/v1"
 
 
+def test_adopt_local_replaces_the_old_keyless_cloud_default(sandbox, monkeypatch):
+    """Pre-1.8 installs saved the OpenAI preset with no key — it cannot work.
+
+    Leaving it would show a demo brain and an API-key field the user has no key
+    for, which is exactly the confusion this release is removing.
+    """
+    config.save_config(
+        {"llm": {"base_url": "https://api.openai.com/v1", "api_key": "", "model": "gpt-4o-mini"}}
+    )
+    monkeypatch.setattr(
+        local_llm,
+        "detect_running",
+        lambda include=None: local_llm.LocalServer(
+            name="Ollama", base_url="http://127.0.0.1:11434", models=["llava:7b"], reachable=True
+        ),
+    )
+    result = local_llm.adopt_local()
+    assert result["changed"] is True
+    saved = config.load_config()["llm"]
+    assert local_llm.is_local_url(saved["base_url"])
+    assert saved["model"] == "llava:7b"
+
+
 def test_adopt_local_is_quiet_when_nothing_is_running(sandbox, monkeypatch):
     config.save_config({"llm": {"base_url": "http://127.0.0.1:11434/v1", "model": ""}})
     monkeypatch.setattr(local_llm, "detect_running", lambda include=None: None)
