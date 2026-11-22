@@ -204,6 +204,8 @@ def test_the_website_has_a_second_home_that_needs_no_token():
     assert "pages: write" in text and "id-token: write" in text
     # Publishing only when the page changes keeps unrelated merges quiet.
     assert "site/**" in text
-    # Pages was not enabled on the repository, and configure-pages fails with
-    # "Get Pages site failed" unless it is told it may turn it on.
-    assert "enablement: true" in text
+    # Pages is not enabled on this repository, and only the owner can enable it.
+    # Until then the workflow must skip with a warning, not fail on every push —
+    # and it must not pretend it published something.
+    assert "steps.pages.outputs.ready == 'true'" in text
+    assert "::warning" in text
