@@ -312,3 +312,34 @@ def test_the_spec_actually_executes_its_head_without_raising():
     assert "_typelibs" in namespace
     if sys.platform.startswith("linux"):
         assert "gi.repository.Gtk" in namespace["hiddenimports"]
+
+
+def test_a_release_carries_only_the_three_downloads():
+    """Five assets per OS made the download page unusable (v1.12.0).
+
+    The self-check report and the window-proof logs are evidence for the run
+    that produced them, not files a person downloads: a release where three of
+    nine assets are logs reads as broken, and one of them was named after the
+    app so it looked like a fourth build.
+    """
+    workflow = (ROOT / ".github" / "workflows" / "desktop.yml").read_text(encoding="utf-8")
+
+    # The release job only pulls the bundles...
+    assert "pattern: Aegis-*" in workflow
+    # ...and nothing else is allowed to start with "Aegis-".
+    assert "name: self-check-${{ matrix.artifact }}" in workflow
+    assert "name: window-proof-${{ matrix.artifact }}" in workflow
+    assert "name: ${{ matrix.artifact }}\n" in workflow
+
+    # The proof is still kept, just with the run.
+    assert "retention-days: 30" in workflow
+
+
+def test_the_honest_install_story_is_in_the_readme():
+    """The exe is unsigned; that is the usual "it does not open" on Windows.
+
+    Saying so plainly, next to the download, is worth more than another dialog.
+    """
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    assert "SmartScreen" in readme
+    assert "unsigned" in readme.lower()

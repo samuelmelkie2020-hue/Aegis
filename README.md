@@ -46,6 +46,10 @@ No Python, no terminal, no browser tab. Aegis opens in **its own window**, and t
 > **First launch on macOS:** the builds are unsigned, so Gatekeeper will complain. Right-click the app → **Open** → **Open**, or run `xattr -dr com.apple.quarantine /Applications/Aegis.app`. You only do this once.
 >
 > **First launch on Windows:** SmartScreen may show *"Windows protected your PC"* — click **More info** → **Run anyway**.
+> The builds are unsigned (a code-signing certificate costs money every year), so Windows has no
+> reason to trust them yet. If **nothing at all** happens after a double-click — no window, no
+> error — wait a few seconds: Aegis opens itself in your browser instead, and writes what went
+> wrong to `%APPDATA%\Aegis\aegis-startup.log`. `Aegis.exe --diagnose` prints the same thing.
 
 ### 🧑‍💻 Running from source
 
@@ -379,7 +383,7 @@ Environment variables:
 
 ```bash
 pip install -r requirements-dev.txt   # runtime deps + pytest + ruff
-python -m pytest -q                   # 533 tests, ~17s, no display, no API key, no internet
+python -m pytest -q                   # 541 tests, ~17s, no display, no API key, no internet
 ruff check .                          # lint (config lives in pyproject.toml)
 python run.py --self-check            # diagnose a machine: data dir, server, webview
 node --check aegis/static/app.js      # front-end syntax
@@ -534,6 +538,7 @@ than asking for an API key.
 | **Nothing happens when I double-click `Aegis.exe`** (fixed in 1.8.3) | First, the guaranteed way in: **`Aegis.exe --web`** — same app, in your normal browser, no native window needed. If the window itself refuses to appear, Aegis now falls back to the browser automatically and tells you why. To understand it: run `Aegis.exe --diagnose` and read the report — it names the cause instead of guessing. The three usual ones: **WebView2 is not installed** (fix below), **antivirus quarantined the exe**, or **a window that opened somewhere you are not looking** (a second copy opens on a free port, so check other windows/virtual desktops). Every launch writes `%APPDATA%\Aegis\aegis-startup.log` — `--diagnose` reads it and tells you which stage it reached. |
 | *"Aegis needs Microsoft Edge WebView2"* | Install the free runtime once: <https://go.microsoft.com/fwlink/p/?LinkId=2124703> — it is preinstalled on Windows 11 and most Windows 10 PCs. `Aegis.exe --diagnose` tells you the installed version, or that there is none. |
 | Desktop window is blank / white | Check `aegis-crash.log` in the data folder; run `python run.py --self-check` and retry with `--debug` |
+| **Double-clicked `Aegis.exe` and nothing happens** | Give it ten seconds: if the native window cannot be shown, Aegis opens itself in your browser instead and keeps running (`--web` is the same thing by hand). Read `%APPDATA%\Aegis\aegis-startup.log` — its last line says which step failed — or run `Aegis.exe --diagnose`. |
 | macOS says the app is damaged / from an unidentified developer | It is unsigned: right-click → **Open**, or `xattr -dr com.apple.quarantine /Applications/Aegis.app` |
 | Where are my settings? | `--self-check` prints the data folder: `%APPDATA%\Aegis`, `~/Library/Application Support/Aegis` or `~/.config/Aegis` |
 

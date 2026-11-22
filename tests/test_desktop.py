@@ -811,3 +811,120 @@ def test_the_window_proof_records_the_window_without_killing_the_process(monkeyp
     assert "WINDOW CREATED" in log
     assert "window is open and serving" in log
     assert exits == [], "the process must be stopped by the runner, not by itself"
+
+
+# ---------------------------------------------------------------------------
+# "The exe does not open": the four ways it fails, and what the user gets
+# ---------------------------------------------------------------------------
+
+@pytest.fixture(autouse=True)
+def _fresh_launch_state(monkeypatch):
+    """The fallback marker is process-wide on purpose; each launch starts clean.
+
+    A fallback test earlier in this file leaves it set, which would make a later
+    watchdog silently do nothing — the kind of cross-test leak that turns a real
+    assertion into a passing no-op.
+    """
+    import aegis.desktop as desktop
+
+    monkeypatch.setattr(desktop, "_FALLBACK_HAPPENED", False)
+
+def test_a_real_launch_keeps_serving_after_a_browser_fallback():
+    """The server must outlive the fallback, or the tab points at nothing.
+
+    The tab is opened while the process is still starting; if the process then
+    exited (as a library-style call does), the page would load and immediately
+    stop working — the same "it does not open" with extra steps.
+    """
+    import inspect
+
+    import run as runner
+
+    source = inspect.getsource(runner.main)
+    assert "keep_serving=True" in source
+    # And the default stays off, so no test or script blocks on a tab.
+    import aegis.desktop as desktop
+
+    assert inspect.signature(desktop.run_desktop).parameters["keep_serving"].default is False
+
+
+def test_a_window_that_never_paints_opens_the_browser_too(monkeypatch, tmp_path):
+    """A process that shows nothing is indistinguishable from a crash."""
+    import aegis.desktop as desktop
+
+    opened: list[str] = []
+    monkeypatch.setattr(desktop, "_open_in_browser", lambda url: opened.append(url) or True)
+    monkeypatch.setattr("aegis.config.DATA_DIR", tmp_path)
+    monkeypatch.delenv("AEGIS_WINDOW_PROOF", raising=False)
+    monkeypatch.setenv("AEGIS_WATCHDOG_SECONDS", "3")
+
+    timer = desktop._start_window_watchdog("http://127.0.0.1:1234/?token=t")
+    timer.join(10)
+    assert opened and opened[0].endswith("?token=t")
+    assert "WINDOW SLOW" in (tmp_path / "aegis-startup.log").read_text(encoding="utf-8")
+
+
+def test_the_watchdog_stays_out_of_the_way_of_a_window_proof(monkeypatch):
+    """CI is measuring the native window; a browser tab would be a false pass."""
+    import aegis.desktop as desktop
+
+    opened: list[str] = []
+    monkeypatch.setattr(desktop, "_open_in_browser", lambda url: opened.append(url) or True)
+    monkeypatch.setenv("AEGIS_WINDOW_PROOF", "1")
+    monkeypatch.setenv("AEGIS_WATCHDOG_SECONDS", "3")
+
+    desktop._start_window_watchdog("http://127.0.0.1:1234/?token=t").join(10)
+    assert opened == []
+
+
+def test_the_watchdog_can_be_switched_off_for_a_headless_run(monkeypatch):
+    """A test that inspects a fake window must not launch a browser."""
+    import aegis.desktop as desktop
+
+    opened: list[str] = []
+    monkeypatch.setattr(desktop, "_open_in_browser", lambda url: opened.append(url) or True)
+    monkeypatch.delenv("AEGIS_WINDOW_PROOF", raising=False)
+    monkeypatch.setenv("AEGIS_NO_WATCHDOG", "1")
+    monkeypatch.setenv("AEGIS_WATCHDOG_SECONDS", "3")
+
+    desktop._start_window_watchdog("http://127.0.0.1:1234/?token=t").join(10)
+    assert opened == []
+
+
+def test_the_watchdog_waits_long_enough_for_a_slow_start(monkeypatch):
+    """Too eager is worse than useless: a browser tab per launch."""
+    monkeypatch.delenv("AEGIS_WATCHDOG_SECONDS", raising=False)
+    import aegis.desktop as desktop
+
+    assert desktop._watchdog_seconds() >= 10
+    monkeypatch.setenv("AEGIS_WATCHDOG_SECONDS", "not-a-number")
+    assert desktop._watchdog_seconds() == 12.0, "a typo must not stop the app"
+
+
+def test_successful_launch_cancels_the_watchdog(fake_webview, monkeypatch):
+    """Closing a window normally must not be followed by a browser tab."""
+    import aegis.desktop as desktop
+
+    timers: list = []
+
+    def arm(url):
+        timers.append(url)
+        return _FakeTimer()
+
+    monkeypatch.setattr(desktop, "_start_window_watchdog", arm)
+    monkeypatch.setenv("AEGIS_NO_WATCHDOG", "1")
+
+    assert desktop.run_desktop(port=0) == 0
+    assert timers, "the launch should have armed the watchdog"
+    assert _FakeTimer.last.cancelled is True
+
+
+class _FakeTimer:
+    last = None
+
+    def __init__(self) -> None:
+        self.cancelled = False
+        _FakeTimer.last = self
+
+    def cancel(self) -> None:
+        self.cancelled = True
