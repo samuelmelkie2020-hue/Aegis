@@ -164,3 +164,25 @@ def test_vercel_is_told_this_is_a_static_site():
     data = json.loads(config.read_text(encoding="utf-8"))
     assert data.get("outputDirectory") == "site"
     assert "buildCommand" not in data or data["buildCommand"] is None
+
+
+def test_the_landing_page_says_where_the_wake_word_is_heard():
+    """A feature card and the honest line have to live on the same page."""
+    html = SITE.read_text(encoding="utf-8")
+    assert "Hey Aegis" in html
+    assert "matched on your own machine" in html or "matched locally" in html
+    assert "speech engine" in html, "the browser's engine has to be named"
+
+
+def test_the_landing_page_test_count_is_not_a_stale_number():
+    """It said 515 while the suite had 530 — a number nobody rechecks."""
+    import re
+
+    html = SITE.read_text(encoding="utf-8")
+    readme = (Path(__file__).resolve().parent.parent / "README.md").read_text(encoding="utf-8")
+    site_count = re.search(r"(\d+)\s+tests", html)
+    readme_count = re.search(r"# (\d+) tests", readme)
+    assert site_count and readme_count
+    assert site_count.group(1) == readme_count.group(1), (
+        f"the site says {site_count.group(1)} tests, the README says {readme_count.group(1)}"
+    )

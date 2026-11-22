@@ -568,6 +568,7 @@ micBtn.addEventListener("click", () => {
     recognition.stop();
     return;
   }
+  if (wakeOn) pauseWake();  // one engine at a time: hand the mic to the button
   recognition = new SpeechRec();
   recognition.lang = navigator.language || "en-US";
   recognition.interimResults = true;
@@ -593,6 +594,7 @@ micBtn.addEventListener("click", () => {
     micBtn.setAttribute("aria-pressed", "false");
     setOrb("idle");
     composerHint.textContent = "Voice input error — type instead.";
+    resumeWake();  // give the microphone back to the wake word
   };
   recognition.onend = () => {
     micBtn.classList.remove("listening");
@@ -601,9 +603,263 @@ micBtn.addEventListener("click", () => {
     composerHint.innerHTML = "<kbd>Enter</kbd> send · <kbd>Shift</kbd>+<kbd>Enter</kbd> new line · voice works in Chrome/Edge";
     const t = userInput.value.trim();
     if (t) sendMessage(t);
+    resumeWake();
   };
   recognition.start();
 });
+
+// ---------------------------------------------------------------------------
+// Wake word ("Hey Aegis") — opt-in, on-device matching
+// ---------------------------------------------------------------------------
+// The browser's speech engine is what listens; it is a general dictation model
+// and has never heard of "Aegis", so it writes back the nearest English word
+// ("ages", "aegus"). aegis/static/wakeword.js compares the sound instead of the
+// spelling, and only the *start* of an utterance counts — "I told Aegis to…"
+// must not wake it.
+//
+// Off by default, remembered per browser, and it never starts without a click:
+// a microphone that listens unasked is not a feature.
+const WAKE_PREF = "aegis.wake";          // "1" | "0"
+const wakeToggle = document.getElementById("wakeToggle");
+const wakeLabel = document.getElementById("wakeLabel");
+const Wake = () => globalThis.AegisWake;  // matcher, loaded by index.html
+
+let wakeRec = null;        // the speech engine instance
+let wakeOn = false;        // the user's intent (survives engine restarts)
+let wakeTimer = null;      // recycle timer: engines end themselves
+let wakeWatchdog = null;   // a session that neither ends nor hears anything
+let wakeFailures = 0;      // consecutive errors; stop after a few
+let wakeRetryAt = 0;       // backoff after a failure
+let wakeCooldownUntil = 0; // ignore the phrase just after acting on it
+
+function wakeName() {
+  return (state.settings.assistant_name || "Aegis").trim() || "Aegis";
+}
+
+function setWakeUi(on, note) {
+  if (wakeToggle) wakeToggle.checked = on;
+  if (wakeLabel) {
+    wakeLabel.textContent = on ? `Wake word on · "${Wake()?.wakePhrase(wakeName()) || "Hey Aegis"}"` : "Wake word";
+  }
+  // An empty note means "say nothing" — the composer hint belongs to whoever
+  // is talking, and clearing it here would erase a real message.
+  if (note) composerHint.textContent = note;
+  else if (on) composerHint.innerHTML = WAKE_HINT;
+  document.body.classList.toggle("wake-listening", on);
+}
+
+function stopWake(reason) {
+  wakeOn = false;
+  clearTimeout(wakeTimer);
+  clearTimeout(wakeWatchdog);
+  wakeTimer = null;
+  wakeWatchdog = null;
+  wakeRec = null;
+  try { recognition?.stop(); } catch { /* not running */ }
+  setWakeUi(false, reason || "");
+  try { localStorage.setItem(WAKE_PREF, "0"); } catch { /* private mode */ }
+}
+
+async function startWake() {
+  if (!SpeechRec || !Wake()) {
+    setWakeUi(false, "Wake word needs Chrome or Edge — voice is not available in this browser.");
+    return false;
+  }
+  // Ask for the microphone explicitly. getUserMedia's prompt is the honest
+  // place to say "this app would like to listen", and a refusal is actionable.
+  try {
+    if (navigator.mediaDevices?.getUserMedia) {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      stream.getTracks().forEach((track) => track.stop());  // we only needed the grant
+    }
+  } catch (err) {
+    setWakeUi(false, "Wake word needs microphone permission — allow the mic and try again.");
+    return false;
+  }
+
+  wakeOn = true;
+  wakeFailures = 0;
+  try { localStorage.setItem(WAKE_PREF, "1"); } catch { /* private mode */ }
+  setWakeUi(true, `Listening for "${Wake().wakePhrase(wakeName())}" — say it with the rest of your request.`);
+  listenForWake();
+  return true;
+}
+
+function listenForWake() {
+  if (!wakeOn) return;
+  // Chrome ends a recognition session every ~60 s even in continuous mode, so
+  // recycling is the only way to keep listening for hours.
+  const engine = new SpeechRec();
+  wakeRec = engine;
+  engine.lang = navigator.language || "en-US";
+  engine.continuous = true;
+  engine.interimResults = true;
+
+  engine.onresult = (event) => {
+    const result = event.results[event.results.length - 1];
+    const heard = (result?.[0]?.transcript || "").trim();
+    if (!heard) return;
+    const phrase = Wake().matchWake(heard, { name: wakeName() });
+    if (!phrase.matched) return;
+    if (Date.now() < wakeCooldownUntil) return;
+
+    // Woke. Stop listening at once: everything after this is the user's request
+    // and belongs in the transcript, not in a second wake attempt.
+    const rest = (phrase.rest || "").trim();
+    wakeCooldownUntil = Date.now() + 3000;
+    wakeRec = null;                 // onend must not re-arm: we are acting now
+    clearTimeout(wakeTimer);
+    try { engine.stop(); } catch { /* already ending */ }
+
+    const after = async () => {
+      if (!rest) { listenOnce(); return; }
+      if (state.busy) {
+        // One turn at a time. Dropping the request silently would look like the
+        // microphone ignored them, so say it and keep the words in the box.
+        userInput.value = rest;
+        toast("Still working on the last answer — say it again when I'm done.");
+        resumeWake();
+        return;
+      }
+      toast(`Heard you: ${rest}`);
+      await sendMessage(rest);   // the same path as pressing Enter
+      resumeWake();              // and back to waiting for the phrase
+    };
+    // Speaking over the engine's own recognition garbles the request, so the
+    // acknowledgement waits for the browser to finish the utterance.
+    try { speak(`${wakeName()} here.`); } catch { /* TTS is best effort */ }
+    setTimeout(after, rest ? 700 : 300);
+  };
+
+  engine.onerror = (event) => {
+    const code = event?.error || "";
+    if (code === "no-speech" || code === "aborted") return;  // normal, not a failure
+    if (code === "not-allowed" || code === "service-not-allowed") {
+      stopWake("Microphone blocked — allow it in the address bar to use the wake word.");
+      return;
+    }
+    wakeFailures += 1;
+    if (wakeFailures >= 3) {
+      stopWake("Wake word stopped: the speech service kept failing. Click 🎙 to speak instead.");
+      return;
+    }
+    wakeRetryAt = Date.now() + 4000;  // back off: repeated errors mean trouble
+  };
+
+  engine.onend = () => {
+    clearTimeout(wakeWatchdog);
+    if (!wakeOn || wakeRec !== engine) return;
+    wakeRec = null;
+    const delay = Math.max(300, wakeRetryAt - Date.now());
+    wakeTimer = setTimeout(listenForWake, delay);
+  };
+
+  try {
+    engine.start();
+  } catch {
+    // start() throws if the previous session has not ended yet. The onend
+    // handler will try again; do not spin.
+    wakeTimer = setTimeout(listenForWake, 1500);
+    return;
+  }
+
+  // A session can also go quiet without ever firing onend (a dropped socket,
+  // a sleeping machine). Then nothing would restart it, the toggle would still
+  // say "on", and the microphone would be closed — so recycle on a timer.
+  clearTimeout(wakeWatchdog);
+  wakeWatchdog = setTimeout(() => {
+    if (!wakeOn || wakeRec !== engine) return;
+    wakeRec = null;
+    try { engine.abort(); } catch { /* already gone */ }
+    resumeWake(0);
+  }, Wake().RESTART_MS);
+}
+
+// Hand the microphone to something else (the 🎙 button) without forgetting
+// that the user wants the wake word. resumeWake() gives it back.
+function pauseWake() {
+  wakeRec = null;            // the ending session must not re-arm itself
+  clearTimeout(wakeTimer);
+  clearTimeout(wakeWatchdog);
+  wakeTimer = null;
+  wakeWatchdog = null;
+  try { recognition?.stop(); } catch { /* not running */ }
+  document.body.classList.remove("wake-listening");  // resumeWake lights it again
+}
+
+// Say the phrase, act, then wait for it again. Without this the toggle would
+// claim the microphone is open while nothing is listening.
+function resumeWake(delay = 600) {
+  if (!wakeOn) return;
+  document.body.classList.add("wake-listening");
+  clearTimeout(wakeTimer);
+  wakeTimer = setTimeout(listenForWake, delay);
+}
+
+// One-shot dictation for when the wake word was said on its own ("Hey Aegis.").
+function listenOnce() {
+  if (!SpeechRec) return;
+  const engine = new SpeechRec();
+  recognition = engine;
+  engine.lang = navigator.language || "en-US";
+  engine.interimResults = true;
+  engine.continuous = false;
+  let text = "";
+  micBtn.classList.add("listening");
+  micBtn.setAttribute("aria-pressed", "true");
+  setOrb("listening");
+  composerHint.textContent = "Listening… ask away (say nothing to cancel)";
+  engine.onresult = (event) => {
+    text = "";
+    for (const result of event.results) text += result[0].transcript;
+    userInput.value = text;
+  };
+  engine.onend = async () => {
+    micBtn.classList.remove("listening");
+    micBtn.setAttribute("aria-pressed", "false");
+    setOrb("idle");
+    composerHint.innerHTML = WAKE_HINT;
+    const said = (text || "").trim();
+    if (said) {
+      await sendMessage(said);
+      resumeWake();
+    } else if (wakeOn) {
+      listenForWake();  // nothing said: go back to listening
+    }
+  };
+  engine.onerror = () => {
+    micBtn.classList.remove("listening");
+    micBtn.setAttribute("aria-pressed", "false");
+    setOrb("idle");
+    if (wakeOn) listenForWake();
+  };
+  try { engine.start(); } catch { /* the mic is busy; nothing to do */ }
+}
+
+const WAKE_HINT = 'Wake word is off · <kbd>Enter</kbd> send · voice works in Chrome/Edge';
+
+if (wakeToggle) {
+  wakeToggle.addEventListener("change", () => {
+    if (wakeToggle.checked) {
+      // If it cannot start, the box must not sit checked and lie about it.
+      startWake().then((ok) => { if (!ok) wakeToggle.checked = false; });
+    } else {
+      stopWake("Wake word off — the microphone is no longer listened to.");
+    }
+  });
+}
+
+// Resume on reload only if the user turned it on themselves; the click that did
+// so is also the gesture browsers require before audio can start.
+function restoreWake() {
+  let remembered = false;
+  try { remembered = localStorage.getItem(WAKE_PREF) === "1"; } catch { /* private mode */ }
+  if (!remembered) { setWakeUi(false); return; }
+  const arm = () => { document.removeEventListener("click", arm); startWake(); };
+  document.addEventListener("click", arm, { once: true });
+  setWakeUi(false, "Click anywhere to resume listening for the wake word.");
+}
+restoreWake();
 
 // ---------------------------------------------------------------------------
 // Composer

@@ -19,6 +19,7 @@ Ask it in plain English (or by voice) and it will look at your screen, run comma
 | 📂 **File assistant** | Lists, reads, writes and searches files |
 | 🖥 **System monitor** | CPU, memory, disk, battery, uptime, top processes |
 | 🎙 **Voice in, voice out** | Talk to it (browser speech recognition), it talks back (TTS) |
+| 🗣 **Wake word** | Say **"Hey Aegis"** instead of clicking the mic — off by default, and the phrase is matched on your own machine |
 | 🧠 **Runs on your PC** | The AI model lives on your computer (**Ollama** / LM Studio). No API key, no account, nothing leaves the machine |
 | 🔍 **Finds the model you already downloaded** | Reads Ollama's folders even when Ollama is not running, starts it if needed, and selects the model — no name to type |
 | 📦 **Installs its own model** | Aegis checks your CPU, RAM and GPU, recommends a model that fits, and downloads it from inside the app |
@@ -198,6 +199,19 @@ Paste your API key and **Save**. Use a **vision-capable model** so Aegis can see
 
 - **Type** in the chat box — Enter sends.
 - **🎙 Voice** — click the mic and speak (Chrome/Edge; it also reads replies aloud — toggle with *Speak replies*).
+- **🗣 Wake word** — turn on *Wake word* in the sidebar and say **"Hey Aegis"**. It is
+  off until you switch it on, and it stays off after you switch it off. Say the whole
+  request in one breath — *"Hey Aegis, what's on my screen?"* — or just *"Hey Aegis"*
+  and wait for the mic; either way the box shows what it heard before it sends. A lit
+  dot under the app name means the microphone is open right now.
+
+  The phrase itself is matched on your PC, in `static/wakeword.js`, by sound rather
+  than spelling, so *"hey ages"* works — and a sentence that merely mentions the name
+  (*"I told Aegis to open Chrome"*) does not wake it, because the phrase has to be the
+  first thing said. **The transcription is not local:** the browser's speech engine
+  does that, and in Chrome and Edge that engine is Google's, so your audio may be
+  sent to them. Turn the wake word on only if that is acceptable; everything the
+  matcher sees never leaves the page.
 - **Quick actions** — the chips on the left for common requests.
 - **💾 Save** — the icon next to 🧹 writes the conversation to a Markdown file
   (`aegis-conversation-<time>.md`). It is a local download; nothing is uploaded.
@@ -365,16 +379,18 @@ Environment variables:
 
 ```bash
 pip install -r requirements-dev.txt   # runtime deps + pytest + ruff
-python -m pytest -q                   # 520 tests, ~17s, no display, no API key, no internet
+python -m pytest -q                   # 532 tests, ~17s, no display, no API key, no internet
 ruff check .                          # lint (config lives in pyproject.toml)
 python run.py --self-check            # diagnose a machine: data dir, server, webview
 node --check aegis/static/app.js      # front-end syntax
+node --test tests/js/*.test.mjs     # the wake word: matcher + page wiring (21 tests)
 ```
 
 The suite runs headless: it redirects `HOME`, the config file and the token file
 to a temp directory before any `aegis` module is imported, so it can never
 touch your real settings, and it fakes the display, the model and the mouse.
-CI runs the tests on 3.10–3.12 plus lint and a JS syntax check (`.github/workflows/ci.yml`).
+CI runs the tests on 3.10–3.12 plus lint and the JavaScript checks
+(`.github/workflows/ci.yml`).
 A second workflow (`.github/workflows/desktop.yml`) freezes the app with PyInstaller on
 Windows, macOS and Linux, smoke-tests each binary with `--self-check`, and attaches the
 archives to the GitHub Release whenever a `v*` tag is pushed.
@@ -504,6 +520,8 @@ than asking for an API key.
 | *"TLS/SSL connection has been closed"* / can't reach a **cloud** provider | Your network is blocking it (not your key). Press **🔌 Test connection** in Settings, try another Provider or a VPN — or switch to **💻 Run on this PC**, which needs no network at all. If you're chatting inside the Arena **preview**: that sandbox is always blocked from AI sites, so local is the only option there. |
 | "Screen capture unavailable" | Run it on a machine with a real display; on macOS grant Screen Recording permission. |
 | Mic button says unsupported | Voice input needs Chrome or Edge (Web Speech API). |
+| Wake word does nothing | It needs Chrome or Edge, the microphone allowed in the address bar, and the toggle switched on. If it turned itself off, the speech service failed three times — the 🎙 button still works. |
+| Wake word starts on its own after a reload | It is remembering that you turned it on. It waits for your first click before opening the mic; switch the toggle off to make it forget. |
 | "No local model is running" | Aegis looks for Ollama on `127.0.0.1:11434`. Start Ollama (open the app, or run `ollama serve`), then ⚙️ Settings → 💻 This computer → **↻ Refresh**. |
 | "…does not have *model* (HTTP 404)" | The server is running but that model is not downloaded. Use **Download** in ⚙️ Settings → 💻 This computer, or `ollama pull <model>`. |
 | Aegis acts but nothing types | Focus the window you want to type into — typing goes to whatever is focused. |
