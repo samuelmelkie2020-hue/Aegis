@@ -1,5 +1,5 @@
 /* Tests for the wake word matcher — run with:
- *   node --test "tests/js/*.test.mjs"
+ *   node --test tests/js/*.test.mjs
  *
  * These live in tests/js/ rather than the Python suite because the matcher runs
  * in the browser. It is a pure module, so Node can test it directly with no

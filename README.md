@@ -383,7 +383,7 @@ python -m pytest -q                   # 532 tests, ~17s, no display, no API key,
 ruff check .                          # lint (config lives in pyproject.toml)
 python run.py --self-check            # diagnose a machine: data dir, server, webview
 node --check aegis/static/app.js      # front-end syntax
-node --test "tests/js/*.test.mjs"     # the wake word: matcher + page wiring (21 tests)
+node --test tests/js/*.test.mjs     # the wake word: matcher + page wiring (21 tests)
 ```
 
 The suite runs headless: it redirects `HOME`, the config file and the token file

@@ -1,5 +1,5 @@
 /* Wiring tests for the wake word in app.js — run with:
- *   node --test "tests/js/*.test.mjs"
+ *   node --test tests/js/*.test.mjs
  *
  * The matcher is tested on its own (wakeword.test.mjs). This file tests the
  * part a user actually experiences: switching the wake word on opens one

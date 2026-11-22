@@ -9,7 +9,7 @@
  *
  * Pure functions, no DOM. Loaded as a classic script by index.html (no build
  * step, no module loader — the desktop webview has to cope too), and also
- * importable from Node for tests: node --test "tests/js/*.test.mjs"
+ * importable from Node for tests: node --test tests/js/*.test.mjs
  */
 
 /** Soundex of one word, or "" when it has no letters. */
