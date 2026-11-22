@@ -186,3 +186,21 @@ def test_the_landing_page_test_count_is_not_a_stale_number():
     assert site_count.group(1) == readme_count.group(1), (
         f"the site says {site_count.group(1)} tests, the README says {readme_count.group(1)}"
     )
+
+
+PAGES = Path(__file__).resolve().parent.parent / ".github" / "workflows" / "pages.yml"
+
+
+def test_the_website_has_a_second_home_that_needs_no_token():
+    """Vercel is blocked on an account permission; Pages is not.
+
+    The site is one self-contained file, so the fallback is a copy — but a
+    workflow that publishes the wrong folder, or one with no permissions,
+    fails silently on a push that nobody is watching.
+    """
+    text = PAGES.read_text(encoding="utf-8")
+    assert "upload-pages-artifact" in text and "deploy-pages" in text
+    assert "path: site" in text, "it must publish site/, not the repository root"
+    assert "pages: write" in text and "id-token: write" in text
+    # Publishing only when the page changes keeps unrelated merges quiet.
+    assert "site/**" in text

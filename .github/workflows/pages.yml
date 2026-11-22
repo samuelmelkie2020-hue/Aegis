@@ -1,0 +1,54 @@
+name: Publish the website
+
+# GitHub Pages is the fallback when the Vercel token cannot create projects.
+# site/ is a single self-contained HTML file with no build step, so publishing
+# it is a copy: no npm, no framework, nothing to install.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "site/**"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One publish at a time, and never cancel one that is already going live.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: publish site/
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check the page before publishing it
+        # The same contract the Python suite enforces, run without Python:
+        # no off-site assets, and no empty page.
+        run: |
+          set -eu
+          [ -s site/index.html ] || { echo "site/index.html is missing or empty"; exit 1; }
+          grep -q "Aegis" site/index.html
+          if grep -Eq '<script[^>]+src="https?://' site/index.html; then
+            echo "site/index.html loads a script from another host"; exit 1
+          fi
+          echo "ok: $(wc -c < site/index.html) bytes"
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+      - id: deployment
+        uses: actions/deploy-pages@v4
