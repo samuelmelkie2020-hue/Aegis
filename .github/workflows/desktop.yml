@@ -253,6 +253,9 @@ jobs:
             exit 1
           fi
 
+      # The proof stays with the run, not on the release: a download page with
+      # five files per OS and three of them logs is a page nobody can read. The
+      # logs are still here for the 30 days a release is interesting.
       - name: Upload window-proof evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -260,12 +263,15 @@ jobs:
           name: window-proof-${{ matrix.artifact }}
           path: artifacts
           if-no-files-found: warn
+          retention-days: 30
 
+      # Named so that it cannot match the `Aegis-*` pattern the release job
+      # downloads: every Aegis-* artifact is a download, and this is not one.
       - name: Upload self-check report
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.artifact }}-self-check
+          name: self-check-${{ matrix.artifact }}
           path: |
             **/self-check.txt
             **/aegis-crash.log
@@ -287,6 +293,11 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
+          # Only the three OS bundles. Everything else a build produces (the
+          # self-check report, the window-proof logs) is for the run, not for
+          # someone's download page.
+          pattern: Aegis-*
+          merge-multiple: false
 
       - name: Package
         run: |

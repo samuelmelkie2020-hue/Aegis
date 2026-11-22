@@ -156,7 +156,11 @@ def main(argv: list[str] | None = None) -> int:
 
     from aegis.desktop import run_desktop
 
-    return run_desktop(port=port, debug=args.debug)
+    # keep_serving: if the native window cannot be created and the app falls
+    # back to a browser tab, that tab needs a server that outlives the fallback.
+    # Without it the process exits the moment the page opens, and the user gets
+    # a working-looking URL that dies — "it does not open" with extra steps.
+    return run_desktop(port=port, debug=args.debug, keep_serving=True)
 
 
 if __name__ == "__main__":

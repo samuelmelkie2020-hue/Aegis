@@ -42,6 +42,7 @@ MIN_SIZE = (900, 620)
 BROWSER_COLOR = "#060b16"
 STARTUP_TIMEOUT = 30.0
 ERROR_WINDOW_TIMEOUT = 20.0  # never block forever on a crash dialog
+_FALLBACK_HAPPENED = False  # set once, when the browser takes over
 
 
 def find_free_port(preferred: int) -> int:
@@ -106,6 +107,30 @@ def _adopt_local_model(*, timeout: float = 3.0) -> None:
     worker = threading.Thread(target=work, name="aegis-adopt", daemon=True)
     worker.start()
     worker.join(timeout)  # a short courtesy wait, never a requirement
+
+
+def _fell_back_to_browser() -> bool:
+    """Did this launch give up on the native window and serve the browser?
+
+    The document embedder (``_show_without_blocking``) runs ``webview.start()``
+    on a daemon thread and gives up after ``ERROR_WINDOW_TIMEOUT``. If that is
+    how the failure shows itself, ``run_desktop`` is still blocked here long
+    after the user has been handed a browser tab — so the exit path needs to ask
+    whether the fallback already happened, and a double-clicked exe must not sit
+    on a dead thread with no window to close.
+    """
+    return bool(_FALLBACK_HAPPENED)
+
+
+def _wake_up(fn) -> None:
+    """Call something that may be blocked, on a thread that may stay blocked.
+
+    Used for the two things that wait on the webview: the error explanation and
+    the update hook. Neither is allowed to keep the process alive.
+    """
+    thread = threading.Thread(target=_swallow, args=(fn,), name="aegis-wake", daemon=True)
+    thread.start()
+    return thread
 
 
 def _write_heartbeat(stage: str) -> None:
@@ -679,7 +704,10 @@ def _report_fatal(exc: Exception, *, page: str | None = None) -> None:
         import webview
 
         webview.create_window("Aegis could not start", html=page(error=exc, log=location))
-        _show_without_blocking(webview)
+        # Ten seconds, not twenty: this is the "it does not open" case, and the
+        # other half of the answer — a browser tab with the working app — must
+        # not wait behind an explanation nobody may be able to see.
+        _show_without_blocking(webview, timeout=min(10.0, ERROR_WINDOW_TIMEOUT))
     except Exception:  # pragma: no cover - no display, no backend, or headless
         log.warning("Could not show the error window", exc_info=True)
 
@@ -723,6 +751,8 @@ def _fallback_to_browser(url: str, reason: str) -> None:
     dead end: the server is *already running*, so the honest thing is to open it
     where it is guaranteed to work and say so plainly.
     """
+    global _FALLBACK_HAPPENED
+    _FALLBACK_HAPPENED = True
     message = (
         "Aegis opened in your web browser instead of its own window.\n\n"
         f"Reason: {reason}\n\n"
@@ -921,6 +951,9 @@ def run_desktop(
         # line is only reachable after pywebview really made a window.
         _write_heartbeat("WINDOW CREATED")
         proof_ok = True
+        # If the window never actually paints, this is what gets the user into
+        # the app instead of leaving a process with nothing on screen.
+        watchdog = _start_window_watchdog(app_url)
         if os.environ.get("AEGIS_WINDOW_PROOF"):
             # Record the proof, then leave the process alone: CI kills it once it
             # has read this line. Closing a GUI from another thread is what turned
@@ -949,6 +982,9 @@ def run_desktop(
             _write_heartbeat(f"4/4 window could not be created: {exc}")
             _fallback_to_browser(app_url, str(exc))
             return _fallback_code(_keep_serving(handle, wait_forever=keep_serving))
+        finally:
+            # A window that closed normally must not trip the watchdog later.
+            watchdog.cancel()
     except Exception as exc:  # the window could not even be constructed
         _write_heartbeat(f"4/4 window could not be created: {exc}")
         _fallback_to_browser(app_url, str(exc))
@@ -960,6 +996,47 @@ def run_desktop(
         # The proof is the exit code: 0 only if a window really existed.
         return 0 if proof_ok else 4
     return 0
+
+
+def _start_window_watchdog(url: str) -> threading.Timer:
+    """Open a browser tab if no native window has painted within a few seconds.
+
+    Three different failures all look the same to a user who double-clicked the
+    exe: the window is created and painted off-screen, the backend throws while
+    nobody is watching, or ``webview.start()`` blocks without raising. In all of
+    them the honest answer is "you already have the app" — so after
+    ``AEGIS_WATCHDOG_SECONDS`` seconds, if the user is still looking at nothing,
+    open the browser. A tab is not ideal, but it beats a process that seems to
+    have done nothing, and it is the same app on the same token URL.
+
+    Disabled by ``AEGIS_NO_WATCHDOG=1`` (a test that wants to inspect a fake
+    window without a browser opening on the runner) and skipped entirely for a
+    window-proof run, which is measuring the native window and nothing else.
+    """
+    def fire() -> None:
+        if os.environ.get("AEGIS_WINDOW_PROOF") or _fell_back_to_browser():
+            return
+        if os.environ.get("AEGIS_NO_WATCHDOG"):
+            return
+        _write_heartbeat(
+            "WINDOW SLOW: no visible window yet — opening the browser as well"
+        )
+        try:
+            _open_in_browser(url)
+        except Exception:  # pragma: no cover - the browser is already best effort
+            pass
+
+    timer = threading.Timer(_watchdog_seconds(), fire)
+    timer.daemon = True
+    timer.start()
+    return timer
+
+
+def _watchdog_seconds() -> float:
+    try:
+        return max(3.0, float(os.environ.get("AEGIS_WATCHDOG_SECONDS", "12")))
+    except ValueError:  # pragma: no cover - a typo must not stop the app
+        return 12.0
 
 
 def _fallback_code(serving: bool) -> int:
