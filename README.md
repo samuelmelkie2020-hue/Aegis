@@ -550,8 +550,10 @@ ships from two places, because a website that depends on one account is a websit
 with a single point of failure:
 
 - **GitHub Pages** — `.github/workflows/pages.yml` publishes `site/` on every push
-  that touches it, at `https://samuelmelkie2020-hue.github.io/Aegis/`. Nothing to
-  authorize; it is just GitHub serving a file the repository already contains.
+  that touches it, at `https://samuelmelkie2020-hue.github.io/Aegis/`. One switch
+  has to be on first: **Settings → Pages → Source: GitHub Actions** (only the
+  repository owner can do that; the API refuses it for anything less). Until then
+  the workflow says so in a warning and skips, rather than failing every push.
 - **Vercel** — `vercel.json` sets `outputDirectory: "site"`. Import the repo with
   the **Other** framework preset, both commands empty, and it deploys the same page.
 
