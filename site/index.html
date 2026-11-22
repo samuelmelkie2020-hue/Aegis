@@ -230,7 +230,7 @@
 
   <main>
     <section class="hero">
-      <span class="eyebrow">Open source · MIT · v1.11.0</span>
+      <span class="eyebrow">Open source · MIT · v1.12.0</span>
       <h1>An AI assistant that<br /><span class="glow">lives on your PC</span></h1>
       <p class="lede">
         Aegis sees your screen, runs commands, opens apps and answers questions —
@@ -245,7 +245,7 @@
 
       <p class="trust">
         Windows · macOS · Linux
-        <span aria-hidden="true">·</span> 515 tests
+        <span aria-hidden="true">·</span> 532 tests
         <span aria-hidden="true">·</span> runs offline
       </p>
 
@@ -281,6 +281,9 @@
           <p>Safe mode is on by default: a command runs only after you press Approve on a card showing exactly what it will do.</p></div>
         <div class="card"><span class="icon" aria-hidden="true">🔍</span><h3>Finds the model you already have</h3>
           <p>Reads Ollama, LM Studio and GGUF folders directly — even when nothing is running — and starts the server for you.</p></div>
+        <div class="card"><span class="icon" aria-hidden="true">🗣</span><h3>Says “Hey Aegis”</h3>
+          <p>Say the phrase instead of clicking the mic. Off until you switch it on, and the phrase is
+          matched on your own machine — but the transcription comes from your browser’s speech engine.</p></div>
         <div class="card"><span class="icon" aria-hidden="true">🔄</span><h3>Updates itself</h3>
           <p>Checks GitHub, verifies the SHA-256 before unpacking, and keeps the previous build as <code>Aegis.old</code>.</p></div>
       </div>
@@ -293,17 +296,17 @@
         you can check. Already have an older Aegis? It offers this build by itself.
       </p>
       <div class="dl">
-        <a href="https://github.com/samuelmelkie2020-hue/Aegis/releases/download/v1.11.0/Aegis-windows.zip">
+        <a href="https://github.com/samuelmelkie2020-hue/Aegis/releases/download/v1.12.0/Aegis-windows.zip">
           <span class="os">Windows</span>
           <span class="how">Unzip → double-click <code>Aegis.exe</code></span>
           <span class="size">27.7 MB</span>
         </a>
-        <a href="https://github.com/samuelmelkie2020-hue/Aegis/releases/download/v1.11.0/Aegis-macos.zip">
+        <a href="https://github.com/samuelmelkie2020-hue/Aegis/releases/download/v1.12.0/Aegis-macos.zip">
           <span class="os">macOS</span>
           <span class="how">Unzip → drag <code>Aegis.app</code> to Applications</span>
           <span class="size">24.2 MB</span>
         </a>
-        <a href="https://github.com/samuelmelkie2020-hue/Aegis/releases/download/v1.11.0/Aegis-linux.zip">
+        <a href="https://github.com/samuelmelkie2020-hue/Aegis/releases/download/v1.12.0/Aegis-linux.zip">
           <span class="os">Linux</span>
           <span class="how"><code>chmod +x Aegis</code> → run it</span>
           <span class="size">43.3 MB</span>
@@ -311,7 +314,7 @@
       </div>
       <p style="margin-top: 18px; color: var(--muted); font-size: 0.9rem;">
         Every release lists its checksums:
-        <a href="https://github.com/samuelmelkie2020-hue/Aegis/releases/tag/v1.11.0">v1.11.0 release notes</a>.
+        <a href="https://github.com/samuelmelkie2020-hue/Aegis/releases/tag/v1.12.0">v1.12.0 release notes</a>.
       </p>
     </section>
 
@@ -351,6 +354,7 @@
             <li>Safe mode asks — it does not sandbox. Approved commands run with your privileges</li>
             <li>A local model is not a filter; the safety rules are code, not prompts</li>
             <li>Hosting it on your LAN exposes a remote-control endpoint; the token is required, but only use networks you trust</li>
+            <li>The wake word is matched locally, but it is transcribed by your browser — in Chrome and Edge that engine is Google’s, so audio can go to them</li>
           </ul>
         </div>
       </div>

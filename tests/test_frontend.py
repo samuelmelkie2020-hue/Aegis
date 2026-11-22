@@ -547,3 +547,101 @@ def test_sizes_never_render_as_zero_gb():
     # The chip uses the byte-precise formatter, not the GB one.
     disk = js[js.index("function renderDisk("):]
     assert "fmtSize(bytes)" in disk
+
+
+# ---------------------------------------------------------------------------
+# Wake word: opt-in, local matching, and honest about the cloud
+# ---------------------------------------------------------------------------
+
+def test_the_wake_word_is_off_until_the_user_asks_for_it(html):
+    """A microphone that listens unasked is not a feature."""
+    toggle = re.search(r'<input[^>]*id="wakeToggle"[^>]*>', html)
+    assert toggle, "the wake-word toggle is missing"
+    assert "checked" not in toggle.group(0)
+    # And nothing starts it on load: only a change event may.
+    js = (STATIC / "app.js").read_text(encoding="utf-8")
+    assert 'wakeToggle.addEventListener("change"' in js
+    assert "startWake();" in js
+    startup = js[js.index("function restoreWake"):]
+    startup = startup[: startup.index("restoreWake();")]
+    assert "startWake()" not in startup.split("const arm")[0]
+
+
+def test_the_matcher_is_loaded_before_the_script_that_uses_it(html):
+    """Classic scripts run in order; the wrong order is a silent TypeError."""
+    matcher = html.index("/static/wakeword.js")
+    app = html.index("/static/app.js")
+    assert matcher < app
+
+
+def test_the_matcher_does_not_use_modules_the_webview_lacks():
+    """No build step, no import maps: a plain script on globalThis."""
+    js = (STATIC / "wakeword.js").read_text(encoding="utf-8")
+    assert "export " not in js
+    assert "globalThis.AegisWake" in js
+
+
+def test_saying_the_phrase_alone_opens_a_single_dictation():
+    """\"Hey Aegis\" then a pause still works — no second click."""
+    js = (STATIC / "app.js").read_text(encoding="utf-8")
+    block = js[js.index("function listenForWake"):]
+    block = block[: block.index("function resumeWake")]
+    assert "function listenOnce" in js
+    assert "listenOnce();" in block
+
+
+def test_the_phrase_must_come_first_so_a_mention_does_not_wake_it():
+    js = (STATIC / "app.js").read_text(encoding="utf-8")
+    block = js[js.index("function listenForWake"):]
+    block = block[: block.index("function resumeWake")]
+    # Matching happens on the utterance; the matcher only accepts it at the
+    # start (asserted in tests/js), and the app must actually call it.
+    assert "matchWake(heard" in block
+
+
+def test_listening_is_visible_while_the_microphone_is_open():
+    css = (STATIC / "style.css").read_text(encoding="utf-8")
+    js = (STATIC / "app.js").read_text(encoding="utf-8")
+    assert "body.wake-listening" in css
+    assert 'classList.toggle("wake-listening"' in js
+
+
+def test_the_wake_word_does_not_hide_that_transcription_leaves_the_pc():
+    """The matching is local; Chrome's engine is not. Say so where it is used."""
+    js = (STATIC / "app.js").read_text(encoding="utf-8")
+    block = js[js.index("Wake word ("):]
+    block = block[: block.index("const WAKE_PREF")]
+    assert "browser" in block.lower()
+    readme = (STATIC.parent.parent / "README.md").read_text(encoding="utf-8")
+    assert "wake word" in readme.lower()
+    sec = (STATIC.parent.parent / "SECURITY.md").read_text(encoding="utf-8")
+    assert "speech" in sec.lower()
+
+
+def test_the_matcher_is_served_to_the_page(client):
+    """A script tag pointing at a file the server does not serve fails silently."""
+    http, auth = client
+    response = http.get("/static/wakeword.js", headers=auth)
+    assert response.status_code == 200
+    assert "javascript" in response.headers["content-type"]
+    assert "AegisWake" in response.text
+
+
+def test_a_quiet_listener_restarts_itself():
+    """A session that dies without firing onend would leave a dead toggle on."""
+    js = (STATIC / "app.js").read_text(encoding="utf-8")
+    block = js[js.index("function listenForWake"):]
+    block = block[: block.index("function resumeWake")]
+    assert "wakeWatchdog" in block
+    assert "RESTART_MS" in block
+
+
+def test_the_mic_button_and_the_wake_word_never_share_the_microphone():
+    """Two engines on one mic gives half a request to each."""
+    js = (STATIC / "app.js").read_text(encoding="utf-8")
+    button = js[js.index("micBtn.addEventListener"):]
+    button = button[: button.index("// Wake word")]
+    assert "pauseWake()" in button
+    button_off = js[js.index("micBtn.addEventListener"):]
+    button_off = button_off[: button_off.index("recognition.start();")]
+    assert "resumeWake()" in button_off

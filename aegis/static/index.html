@@ -23,6 +23,9 @@
        preview request; elsewhere this is empty and "config.js" says so. -->
   <script>window.AEGIS_TOKEN = "%%AEGIS_TOKEN%%";</script>
   <script src="/config.js"></script>
+  <!-- Wake-word matching: a classic script so it loads with no build step and
+       works inside the desktop window's webview too. -->
+  <script src="/static/wakeword.js"></script>
 
   <div class="app">
     <!-- ================= LEFT: diagnostics, orb, screen ================= -->
@@ -123,6 +126,12 @@
         <label class="toggle">
           <input type="checkbox" id="voiceReplies" checked />
           <span>Speak replies</span>
+        </label>
+        <!-- Off by default: a microphone that listens without being asked for is
+             not a feature, it is a bug with a marketing name. -->
+        <label class="toggle">
+          <input type="checkbox" id="wakeToggle" />
+          <span id="wakeLabel">Wake word</span>
         </label>
         <!-- Update banner: hidden until a check finds something. It sits above
              the footer rather than in a modal so it cannot cover the chat. -->

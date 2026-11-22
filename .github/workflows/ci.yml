@@ -65,3 +65,8 @@ jobs:
           node-version: "20"
       - name: Syntax check
         run: node --check aegis/static/app.js
+      - name: Unit tests (the wake word, and its wiring into the page)
+        # There is no build step and no npm dependency: these are plain node
+        # tests over a classic script. Passing the directory fails on Node 22,
+        # so the glob is explicit.
+        run: node --test "tests/js/*.test.mjs"

@@ -55,6 +55,13 @@ output policy in `aegis/safety.py`.
   a local model nothing is uploaded. With OpenAI/Gemini/Groq/OpenRouter the
   screenshots, file contents and clipboard you ask about go to that provider. That is
   a configuration decision, and the app tells you which mode you are in.
+- **The wake word is matched locally; the speech is not.** Sound-alike matching runs
+  in the page (`static/wakeword.js`) and its result never leaves it, but the words
+  themselves are transcribed by the browser's speech engine — and in Chrome and Edge
+  that engine is Google's, so audio may be sent to them. It is off by default and only
+  opens the microphone after you switch it on and click the page. If a local model is
+  the reason you use Aegis, prefer typing or the 🎙 button with the wake word left off,
+  or use a browser whose speech engine runs on-device.
 - **`AEGIS_HOST=0.0.0.0` exposes the app to your network.** The token is still
   required, but a network you do not control is not a safe place to put a
   full remote-control endpoint.
