@@ -379,7 +379,7 @@ Environment variables:
 
 ```bash
 pip install -r requirements-dev.txt   # runtime deps + pytest + ruff
-python -m pytest -q                   # 532 tests, ~17s, no display, no API key, no internet
+python -m pytest -q                   # 533 tests, ~17s, no display, no API key, no internet
 ruff check .                          # lint (config lives in pyproject.toml)
 python run.py --self-check            # diagnose a machine: data dir, server, webview
 node --check aegis/static/app.js      # front-end syntax
@@ -545,10 +545,19 @@ Made with 🛡 — Aegis.
 
 ## 🌐 The website
 
-`site/index.html` is a single self-contained page (no CDN, no external script) that
-`vercel.json` deploys as a static site — `outputDirectory: "site"`. It is checked by
-tests: no off-site assets, every download link must point at the current version,
-and the privacy section must keep its honest half.
+`site/index.html` is a single self-contained page (no CDN, no external script). It
+ships from two places, because a website that depends on one account is a website
+with a single point of failure:
+
+- **GitHub Pages** — `.github/workflows/pages.yml` publishes `site/` on every push
+  that touches it, at `https://samuelmelkie2020-hue.github.io/Aegis/`. Nothing to
+  authorize; it is just GitHub serving a file the repository already contains.
+- **Vercel** — `vercel.json` sets `outputDirectory: "site"`. Import the repo with
+  the **Other** framework preset, both commands empty, and it deploys the same page.
+
+Both are checked by tests: no off-site assets, every download link must point at
+the current version, the privacy section must keep its honest half, and the Pages
+workflow must publish `site/` rather than the repository root.
 
 ## 📄 License
 
