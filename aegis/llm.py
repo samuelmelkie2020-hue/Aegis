@@ -462,10 +462,34 @@ def _friendly_model_error(exc: Exception, llm_cfg: dict) -> str:
         code = int(m.group(1))
         model = (llm_cfg.get("model") or "").strip() or "the selected model"
         if code == 404:
+            # The model the config names is not the one the server has — the
+            # commonest local-model failure, and the one where listing what *is*
+            # installed (and on disk) turns a dead end into a click.
+            from .local_llm import known_model_names
+
+            installed: list[str] = []
+            try:
+                for server in local_status().get("servers") or []:
+                    if server.get("reachable"):
+                        installed.extend(server.get("models") or [])
+            except Exception:  # pragma: no cover - diagnostics must never raise
+                pass
+            on_disk = [n for n in known_model_names() if n not in installed]
+            have = ", ".join(sorted(set(installed))[:6])
+            disk_note = (
+                f" There {'is' if len(on_disk) == 1 else 'are'} {len(on_disk)} more on disk "
+                f"({', '.join(on_disk[:4])}) that the server is not listing — press "
+                "**🔍 Find the model I downloaded** in Settings."
+                if on_disk
+                else ""
+            )
             return (
-                f"⚠ The local server is running, but it does not have **{model}** (HTTP 404).\n\n"
-                "Open ⚙️ Settings → **Local model** and press **Download** next to a model, "
-                "or run `ollama pull llama3.2:3b` in a terminal, then press **🔌 Test connection**."
+                f"⚠ The local server is running, but it does not have **{model}** (HTTP 404)."
+                + (f"\n\nIt does have: {have}." if have else "")
+                + disk_note
+                + "\n\nOpen ⚙️ Settings → **💻 This computer** and press "
+                "**🔍 Find the model I downloaded**, or run `ollama pull llama3.2:3b`, "
+                "then **🔌 Test connection**."
             )
         return f"⚠ Your local model server returned an error: {msg[:300]}"
 

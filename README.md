@@ -20,6 +20,7 @@ Ask it in plain English (or by voice) and it will look at your screen, run comma
 | 🖥 **System monitor** | CPU, memory, disk, battery, uptime, top processes |
 | 🎙 **Voice in, voice out** | Talk to it (browser speech recognition), it talks back (TTS) |
 | 🧠 **Runs on your PC** | The AI model lives on your computer (**Ollama** / LM Studio). No API key, no account, nothing leaves the machine |
+| 🔍 **Finds the model you already downloaded** | Reads Ollama's folders even when Ollama is not running, starts it if needed, and selects the model — no name to type |
 | 📦 **Installs its own model** | Aegis checks your CPU, RAM and GPU, recommends a model that fits, and downloads it from inside the app |
 | 🛡 **Safe mode** | Asks your approval before touching your PC (on by default) |
 | ⏹ **Stop button** | Change your mind mid-answer: Stop (or `Esc`) ends the turn at once, even while a local model is still thinking |
@@ -112,6 +113,38 @@ at all. The default provider is `http://127.0.0.1:11434/v1` with no key.
 > ⚡ **Startup never waits for it.** The window opens first and the lookup happens
 > in the background (0.6 s per endpoint, no GPU probe); if nothing answers, you get
 > the demo brain and the Settings panel, not a splash screen that never leaves.
+
+### 🔍 "I downloaded a model — where is it?"
+
+You do not need to know. Open **⚙️ Settings → 💻 This computer** and press
+**🔍 Find the model I downloaded**. One press:
+
+1. **reads Ollama's folders directly** — so it finds your models even when Ollama
+   is not running, which is exactly when the list normally looks empty;
+2. **starts Ollama for you** if it is installed but not running;
+3. **points Ollama at the folder that actually has the weights** if you moved it
+   (or the models landed somewhere other than the default);
+4. **selects the best model it found** — a vision model first, so Aegis can see
+   your screen — and saves it. No model name to type, no URL to remember.
+
+The panel also lists **every model file on this PC with its real size**, and where
+the folder is. Click a name to use that one instead.
+
+You can also just ask: *"where is my downloaded model?"* — Aegis has a
+`local_models` tool that reports what is installed, which ones a server is
+serving, and the folder they live in.
+
+**Where the files usually are:**
+
+| OS | Folder |
+|---|---|
+| Windows | `%LOCALAPPDATA%\Programs\Ollama\models` (older installs: `%USERPROFILE%\.ollama\models`) |
+| macOS | `~/.ollama/models`, or `~/Library/Application Support/Ollama/models` for the app |
+| Linux | `~/.ollama/models` (system service: `/usr/share/ollama/.ollama/models`) |
+
+`OLLAMA_MODELS` overrides all of them, and Aegis honours it. Weights live in
+`blobs/`; the small files in `manifests/` are the names, which is how Aegis reads
+the list without a server.
 
 ### Cloud is still optional
 
@@ -307,7 +340,7 @@ Environment variables:
 
 ```bash
 pip install -r requirements-dev.txt   # runtime deps + pytest + ruff
-python -m pytest -q                   # 479 tests, ~14s, no display, no API key, no internet
+python -m pytest -q                   # 504 tests, ~16s, no display, no API key, no internet
 ruff check .                          # lint (config lives in pyproject.toml)
 python run.py --self-check            # diagnose a machine: data dir, server, webview
 node --check aegis/static/app.js      # front-end syntax

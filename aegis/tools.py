@@ -245,6 +245,19 @@ TOOLS: list[dict[str, Any]] = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "local_models",
+            "description": (
+                "List the AI model files installed on this computer and the folder they live in, "
+                "plus which ones a local server is currently offering. Use this when the user asks "
+                "which models they have, where their downloaded model went, or whether Aegis is "
+                "using a local model."
+            ),
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
 ]
 
 
@@ -747,6 +760,75 @@ def clipboard(action: str, text: str | None = None) -> dict[str, Any]:
 # Dispatcher
 # ---------------------------------------------------------------------------
 
+def _fmt_bytes(count: float) -> str:
+    """Bytes as a short human size: 900 MB, 4.7 GB — never "0.0 GB"."""
+    if not count:
+        return "0 B"
+    if count >= 1e9:
+        return f"{count / 1e9:.1f} GB"
+    if count >= 1e6:
+        return f"{count / 1e6:.0f} MB"
+    return f"{count / 1e3:.0f} kB"
+
+
+def local_models() -> dict[str, Any]:
+    """Report the AI models installed on this PC, and where their files live.
+
+    Read-only on purpose: it scans Ollama's folders and asks a running server what
+    it has. It never starts or stops anything, because "what do I have?" should be
+    free to answer — the clicking is in Settings (🔍 Find the model I downloaded).
+    """
+    from . import local_llm
+
+    try:
+        disk = local_llm.scan_disk()
+    except Exception as exc:  # pragma: no cover - defensive
+        return _fail(f"could not read the model folder ({exc})")
+
+    served: list[str] = []
+    try:
+        for server in local_llm.probe_servers(timeout=local_llm.PROBE_TIMEOUT):
+            if server.reachable:
+                served.extend(server.models)
+    except Exception:  # pragma: no cover - defensive
+        pass
+
+    if not disk["models"] and not served:
+        return {
+            "ok": True,
+            "result": (
+                "No AI model files found on this PC.\n"
+                f"{local_llm.install_hint()}\n"
+                "Download one in ⚙️ Settings → 💻 This computer and Aegis can use it."
+            ),
+        }
+
+    lines = []
+    if served:
+        lines.append("Models a local server is offering right now:")
+        lines.extend(f"  • {name}" for name in sorted(set(served)))
+    else:
+        lines.append("No local AI server is running right now (Ollama may not be started).")
+    if disk["models"]:
+        lines.append("")
+        lines.append(f"Model files on this disk ({_fmt_bytes(disk['total_gb'] * 1e9)} total):")
+        for entry in disk["models"]:
+            size = _fmt_bytes(entry["size_bytes"]) if entry["size_bytes"] else "size unknown"
+            eyes = ", can see the screen" if entry["vision"] else ", text only"
+            lines.append(f"  • {entry['name']} — {size}{eyes}")
+        for folder in disk["dirs"]:
+            lines.append(f"  folder: {folder['path']} ({folder['note']})")
+        unlisted = [m["name"] for m in disk["models"] if m["name"] not in set(served)]
+        if unlisted and served:
+            lines.append("")
+            lines.append(
+                "Some of those are not being served: " + ", ".join(unlisted[:6])
+                + ". Tell the user to open Settings → 💻 This computer → "
+                "🔍 Find the model I downloaded."
+            )
+    return {"ok": True, "result": _truncate("\n".join(lines))}
+
+
 def execute_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
     """Run a tool by name and return ``{ok, result, [image, …]}``.
 
@@ -805,4 +887,6 @@ def _dispatch(name: str, args: dict[str, Any]) -> dict[str, Any]:
         return search_files(args.get("query", ""), args.get("path"))
     if name == "clipboard":
         return clipboard(args.get("action", "get"), args.get("text"))
+    if name == "local_models":
+        return local_models()
     return _fail(f"unknown tool '{name}'")

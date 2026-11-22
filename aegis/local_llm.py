@@ -27,7 +27,6 @@ import platform
 import shutil
 import socket
 import subprocess
-import sys
 import threading
 import time
 from dataclasses import dataclass, field
@@ -746,6 +745,10 @@ def status(*, include: str | None = None) -> dict[str, Any]:
     for server in reachable:
         installed.extend(server.models)
     choice = recommend(hardware, installed)
+    # What is on this disk even if no server is up: the answer to "I downloaded a
+    # model — where did it go?". Nothing here starts a process; that is the
+    # explicit /api/local/adopt action, because opening Settings must stay cheap.
+    disk = scan_disk()
     return {
         "hardware": hardware.as_dict(),
         "servers": [s.as_dict() for s in servers],
@@ -755,6 +758,10 @@ def status(*, include: str | None = None) -> dict[str, Any]:
         "pull": pull_state(),
         "ollama_installed": bool(shutil.which("ollama")),
         "hint": install_hint(),
+        "disk": disk,
+        "on_disk_not_listed": [
+            m for m in disk["models"] if m["name"] not in set(installed)
+        ],
     }
 
 
@@ -833,12 +840,296 @@ def install_hint() -> str:
     return "Install Ollama: `curl -fsSL https://ollama.com/install.sh | sh`"
 
 
-def model_dir() -> Path:
-    """Where Ollama keeps weights — used only to estimate disk use."""
-    env = os.environ.get("OLLAMA_MODELS")
+# ---------------------------------------------------------------------------
+# What is on this disk, even when Ollama is not running
+# ---------------------------------------------------------------------------
+#
+# The question "I downloaded a model, where is it?" is answered by the file
+# system, not by the server: Ollama only lists models while `ollama serve` is up,
+# and if the app is not installed any more (or the server was never started) the
+# model list comes back empty while gigabytes sit in a folder. These two
+# functions read that folder directly, which is the only way to say "you have
+# llama3.2:3b on disk" without anything running.
+
+# Ollama's own directory names. Weights live in `blobs/`, and `manifests/` holds
+# a small JSON per model whose path *is* the model name (`registry.ollama.ai/
+# library/llama3.2/3b` → `llama3.2:3b`).
+MANIFEST_ROOT = ("manifests",)
+BLOB_ROOT = ("blobs",)
+
+
+def _home() -> Path:
+    return Path(os.environ.get("HOME") or os.environ.get("USERPROFILE") or Path.home())
+
+
+def model_dirs() -> list[tuple[Path, str]]:
+    """Every place Ollama might keep its models on this machine, best first.
+
+    ``OLLAMA_MODELS`` wins because that is how a user who moved the folder said
+    so. The rest are the defaults for each OS, plus the older shared location a
+    Linux install may still use. Only existing directories are returned, so a
+    caller can report "nowhere" honestly rather than listing guesses.
+    """
+    candidates: list[tuple[Path, str]] = []
+    env = (os.environ.get("OLLAMA_MODELS") or "").strip()
     if env:
-        return Path(env)
-    home = Path.home()
-    if sys.platform.startswith("win"):
-        return home / ".ollama" / "models"
-    return home / ".ollama" / "models"
+        candidates.append((Path(env).expanduser(), "set by OLLAMA_MODELS"))
+    home = _home()
+    system = platform.system()
+    if system == "Windows":
+        local = Path(os.environ.get("LOCALAPPDATA") or home / "AppData" / "Local")
+        candidates.append((local / "Programs" / "Ollama" / "models", "Ollama's Windows install folder"))
+        candidates.append((home / ".ollama" / "models", "your user folder"))
+    elif system == "Darwin":
+        candidates.append((home / ".ollama" / "models", "your user folder"))
+        candidates.append(
+            (home / "Library" / "Application Support" / "Ollama" / "models", "the macOS app data folder")
+        )
+    else:
+        candidates.append((home / ".ollama" / "models", "your user folder"))
+        candidates.append((Path("/usr/share/ollama/.ollama/models"), "the system-wide Ollama service"))
+        candidates.append((Path("/var/lib/ollama/.ollama/models"), "the system-wide Ollama service"))
+    seen: set[str] = set()
+    out: list[tuple[Path, str]] = []
+    for path, why in candidates:
+        key = str(path)
+        if key in seen:
+            continue
+        seen.add(key)
+        try:
+            if path.is_dir() and any(path.iterdir()):
+                out.append((path, why))
+        except OSError:
+            continue
+    return out
+
+
+def model_dir() -> Path:
+    """The most likely Ollama model folder (whether or not it exists)."""
+    found = model_dirs()
+    return found[0][0] if found else _home() / ".ollama" / "models"
+
+
+def _manifest_name(root: Path, manifest: Path) -> str:
+    """``…/manifests/registry.ollama.ai/library/llama3.2/3b`` → ``llama3.2:3b``.
+
+    Ollama's layout carries the registry and namespace as extra path parts. A
+    name without a tag is served as ``:latest``, and the tag is the last part, so
+    the two cases are distinguishable without asking the server.
+    """
+    try:
+        parts = manifest.relative_to(root).parts
+    except ValueError:
+        parts = manifest.parts
+    if len(parts) < 3:
+        return ""
+    model, tag = parts[-2], parts[-1]
+    return model if tag == "latest" else f"{model}:{tag}"
+
+
+def _blob_size(root: Path, digest: str) -> int:
+    """Bytes for a ``sha256:…`` digest, preferring the uncompressed blob."""
+    if not digest.startswith("sha256:"):
+        return 0
+    key = digest.split(":", 1)[1]
+    for name in (f"sha256-{key}", f"sha256-{key}-partial"):
+        candidate = root / Path(*BLOB_ROOT) / name
+        try:
+            return candidate.stat().st_size
+        except OSError:
+            continue
+    return 0
+
+
+def scan_disk(*, limit_manifests: int = 4000) -> dict[str, Any]:
+    """Models sitting in an Ollama folder, read without any server running.
+
+    Returns ``{"dirs": [...], "models": [...], "total_gb": float, "error": ""}``.
+    Every model entry is ``{name, size_bytes, size_gb, vision, modified}``, so the
+    UI can show the user what they already paid for in bandwidth and disk.
+    """
+    dirs = model_dirs()
+    models: dict[str, dict[str, Any]] = {}
+    scanned = 0
+    for root, why in dirs:
+        manifests = root / Path(*MANIFEST_ROOT)
+        if not manifests.is_dir():
+            continue
+        for manifest in sorted(manifests.rglob("*")):
+            if scanned >= limit_manifests:
+                break
+            try:
+                if not manifest.is_file():
+                    continue
+            except OSError:
+                continue
+            scanned += 1
+            name = _manifest_name(manifests, manifest)
+            if not name:
+                continue
+            size = 0
+            modified = 0.0
+            try:
+                import json as _json
+
+                data = _json.loads(manifest.read_text(encoding="utf-8"))
+                for layer in data.get("layers") or []:
+                    if isinstance(layer, dict):
+                        size += _blob_size(root, str(layer.get("digest") or ""))
+                modified = manifest.stat().st_mtime
+            except Exception:
+                # An unreadable manifest is not a reason to hide the rest.
+                pass
+            models[name] = {
+                "name": name,
+                "size_bytes": size,
+                "size_gb": round(size / 1e9, 2) if size else 0.0,
+                "vision": has_vision(name),
+                "modified": modified,
+                "folder": str(root),
+                "folder_note": why,
+            }
+    found = sorted(models.values(), key=lambda m: (-m["size_bytes"], m["name"]))
+    return {
+        "dirs": [{"path": str(p), "note": why} for p, why in dirs],
+        "models": found,
+        "total_gb": round(sum(m["size_bytes"] for m in found) / 1e9, 2),
+        "error": "",
+    }
+
+
+def known_model_names() -> list[str]:
+    """Names of models on disk, for a better "that model is not installed" error."""
+    try:
+        return [m["name"] for m in scan_disk()["models"]]
+    except Exception:  # pragma: no cover - a scan failure must never break a chat
+        return []
+
+
+def start_server(models_dir: Path | None = None, *, timeout: float = 20.0) -> dict[str, Any]:
+    """Start Ollama in the background so the user does not have to open a terminal.
+
+    Only ever starts the binary Ollama itself installed — never a path from the
+    network or from a request body. If it is already answering, nothing happens.
+    """
+    if any(server.reachable for server in probe_servers(timeout=PROBE_TIMEOUT)):
+        return {"ok": True, "detail": "A local AI server is already running."}
+    binary = shutil.which("ollama")
+    if not binary:
+        return {
+            "ok": False,
+            "detail": (
+                "Ollama's `ollama` command is not on your PATH, so Aegis cannot start it "
+                "for you. Open the Ollama app once, then press Refresh."
+            ),
+        }
+    env = dict(os.environ)
+    if models_dir is not None:
+        env["OLLAMA_MODELS"] = str(models_dir)
+    kwargs: dict[str, Any] = {
+        "stdout": subprocess.DEVNULL,
+        "stderr": subprocess.DEVNULL,
+        "env": env,
+    }
+    if platform.system() == "Windows":
+        # No console window flashing up for a background service.
+        kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+    try:
+        subprocess.Popen([binary, "serve"], **kwargs)  # noqa: S603 - fixed argv
+    except Exception as exc:
+        return {"ok": False, "detail": f"Could not start Ollama ({str(exc)[:160]})."}
+
+    # Wait for it to answer: a first start loads model metadata and is not instant.
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if any(server.reachable for server in probe_servers(timeout=0.5)):
+            return {"ok": True, "detail": "Started Ollama. Checking its models…"}
+        time.sleep(0.5)
+    return {
+        "ok": False,
+        "detail": (
+            "Started Ollama, but it is not answering yet. Give it a few seconds and "
+            "press Refresh — or open the Ollama app and check its window."
+        ),
+    }
+
+
+def load_installed(models_dir: Path | None = None, *, base_url: str = "") -> dict[str, Any]:
+    """Make a model on this disk usable, in as few steps as the machine allows.
+
+    The order is deliberate:
+
+    1. **server already up** — just read its list; nothing else to do.
+    2. **models on disk but no server** — start Ollama ourselves, then read it.
+    3. **the folder is not where Ollama looks** — restart it pointed at the folder
+       that actually has the weights (``OLLAMA_MODELS``), which is exactly the
+       "I know it downloaded, but it is not in the list" case.
+    4. **nothing anywhere** — say so plainly, with the one command that fixes it.
+    """
+    target = Path(models_dir).expanduser() if models_dir else None
+    disk = scan_disk()
+
+    if target is None and disk["dirs"]:
+        # Prefer a folder that actually holds models over an empty default.
+        target = Path(disk["dirs"][0]["path"])
+
+    running = [s for s in probe_servers(include=base_url or None, timeout=PROBE_TIMEOUT) if s.reachable]
+    with_models = [s for s in running if s.models]
+    if with_models:
+        return {
+            "ok": True,
+            "started": False,
+            "server": with_models[0].name,
+            "models": with_models[0].models,
+            "detail": f"{with_models[0].name} is already running with {len(with_models[0].models)} model(s) ready.",
+            "disk": disk,
+        }
+
+    if not disk["models"] and not running:
+        return {
+            "ok": False,
+            "started": False,
+            "models": [],
+            "disk": disk,
+            "detail": (
+                "No model files and no local server were found on this PC. "
+                + install_hint()
+            ),
+        }
+
+    started = start_server(target)
+    after = [s for s in probe_servers(include=base_url or None, timeout=LIST_TIMEOUT) if s.models]
+    if after:
+        return {
+            "ok": True,
+            "started": started.get("ok", False),
+            "server": after[0].name,
+            "models": after[0].models,
+            "detail": (
+                f"{started.get('detail', '')} {after[0].name} now lists "
+                f"{len(after[0].models)} model(s)."
+            ).strip(),
+            "disk": disk,
+        }
+
+    on_disk = [m["name"] for m in disk["models"]]
+    if on_disk and target is not None:
+        return {
+            "ok": False,
+            "started": started.get("ok", False),
+            "models": on_disk,
+            "disk": disk,
+            "detail": (
+                f"Found {len(on_disk)} model(s) on disk ({', '.join(on_disk[:4])}"
+                f"{'…' if len(on_disk) > 4 else ''}) in {target}, but Ollama is not serving them. "
+                "Aegis restarted Ollama pointed at that folder; if the list is still empty, "
+                "open the Ollama app once so it can register them."
+            ),
+        }
+    return {
+        "ok": False,
+        "started": started.get("ok", False),
+        "models": [],
+        "disk": disk,
+        "detail": started.get("detail") or "Ollama is installed but did not list any models.",
+    }

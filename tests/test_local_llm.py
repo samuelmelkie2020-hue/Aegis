@@ -678,3 +678,266 @@ def test_a_cloud_endpoint_still_gets_cloud_advice(client, monkeypatch):
     ).json()
     assert body["ok"] is False
     assert "check the base URL and model name" in body["detail"]
+
+
+# ---------------------------------------------------------------------------
+# Finding a model that is already on the disk ("where did my download go?")
+# ---------------------------------------------------------------------------
+
+def _fake_ollama_store(root, models: dict[str, list[int]]):
+    """Write a minimal but *accurately shaped* Ollama model folder.
+
+    Layout: ``manifests/registry.ollama.ai/library/<name>/<tag>`` refers to
+    ``blobs/sha256-<hex>``. Getting this wrong is how a scanner reports "no
+    models" on a machine that has 20 GB of them.
+    """
+    import hashlib
+
+    blobs = root / "blobs"
+    blobs.mkdir(parents=True, exist_ok=True)
+    for name, sizes in models.items():
+        model, _, tag = name.partition(":")
+        tag = tag or "latest"
+        layers = []
+        for index, size in enumerate(sizes):
+            data = (f"{name}-{index}".encode() * (size // max(len(name), 1) + 1))[:size]
+            digest = hashlib.sha256(data).hexdigest()
+            (blobs / f"sha256-{digest}").write_bytes(data)
+            layers.append({"mediaType": "application/vnd.ollama.image.model", "digest": f"sha256:{digest}"})
+        manifest = root / "manifests" / "registry.ollama.ai" / "library" / model / tag
+        manifest.parent.mkdir(parents=True, exist_ok=True)
+        manifest.write_text(json.dumps({"layers": layers}), encoding="utf-8")
+    return root
+
+
+def test_models_on_disk_are_found_without_a_running_server(tmp_path, monkeypatch):
+    """The whole premise: the folder is readable even when Ollama is not up."""
+    store = _fake_ollama_store(tmp_path / "models", {"llama3.2:3b": [2_000_000], "qwen2.5vl:3b": [3_000_000]})
+    monkeypatch.setenv("OLLAMA_MODELS", str(store))
+    found = local_llm.scan_disk()
+
+    names = [m["name"] for m in found["models"]]
+    assert names == ["qwen2.5vl:3b", "llama3.2:3b"], names       # largest first
+    assert found["models"][0]["vision"] is True
+    assert found["models"][1]["vision"] is False
+    assert found["total_gb"] > 0.004
+    assert str(store) == found["dirs"][0]["path"]
+
+
+def test_a_manifest_named_latest_is_reported_without_a_tag(tmp_path, monkeypatch):
+    """Ollama serves ``llava/latest`` as plain ``llava``; saying ``llava:latest``
+    would name a model the server does not have."""
+    store = _fake_ollama_store(tmp_path / "models", {"llava": [1_000]})
+    monkeypatch.setenv("OLLAMA_MODELS", str(store))
+    assert [m["name"] for m in local_llm.scan_disk()["models"]] == ["llava"]
+
+
+def test_an_unreadable_manifest_does_not_hide_the_others(tmp_path, monkeypatch):
+    store = _fake_ollama_store(tmp_path / "models", {"llama3.2:3b": [1000]})
+    broken = store / "manifests" / "registry.ollama.ai" / "library" / "broken" / "1b"
+    broken.parent.mkdir(parents=True, exist_ok=True)
+    broken.write_text("{not json", encoding="utf-8")
+    monkeypatch.setenv("OLLAMA_MODELS", str(store))
+    names = [m["name"] for m in local_llm.scan_disk()["models"]]
+    assert "llama3.2:3b" in names and "broken:1b" in names
+
+
+def test_nowhere_to_look_is_reported_honestly(tmp_path, monkeypatch):
+    monkeypatch.setenv("OLLAMA_MODELS", str(tmp_path / "empty"))
+    monkeypatch.setattr(local_llm, "_home", lambda: tmp_path / "nohome")
+    monkeypatch.setattr(local_llm.platform, "system", lambda: "Linux")
+    found = local_llm.scan_disk()
+    assert found["models"] == [] and found["dirs"] == []
+    assert local_llm.model_dir().name == "models"  # a sensible default, not a crash
+
+
+def test_known_model_names_never_raises(monkeypatch):
+    monkeypatch.setattr(local_llm, "scan_disk", lambda **kw: 1 / 0)
+    assert local_llm.known_model_names() == []
+
+
+def test_starting_a_server_that_is_already_running_does_nothing(monkeypatch):
+    """Starting a second Ollama would fight the first one for the port."""
+    from aegis.local_llm import LocalServer
+
+    monkeypatch.setattr(
+        local_llm, "probe_servers",
+        lambda **kw: [LocalServer(name="Ollama", base_url="http://127.0.0.1:11434", reachable=True)],
+    )
+    started = []
+    monkeypatch.setattr(local_llm.subprocess, "Popen", lambda *a, **k: started.append(a))
+    result = local_llm.start_server()
+    assert result["ok"] is True and started == []
+    assert "already running" in result["detail"]
+
+
+def test_starting_a_server_is_refused_when_ollama_is_not_installed(monkeypatch):
+    from aegis.local_llm import LocalServer
+
+    monkeypatch.setattr(local_llm, "probe_servers", lambda **kw: [LocalServer("x", "http://127.0.0.1:1")])
+    monkeypatch.setattr(local_llm.shutil, "which", lambda name: None)
+    result = local_llm.start_server()
+    assert result["ok"] is False
+    assert "not on your PATH" in result["detail"]
+
+
+def test_load_installed_prefers_a_server_that_already_has_models(monkeypatch):
+    from aegis.local_llm import LocalServer
+
+    monkeypatch.setattr(
+        local_llm, "probe_servers",
+        lambda **kw: [LocalServer("Ollama", "http://127.0.0.1:11434", models=["llama3.2:3b"], reachable=True)],
+    )
+    called = []
+    monkeypatch.setattr(local_llm, "start_server", lambda *a, **k: called.append(1) or {"ok": True})
+    result = local_llm.load_installed()
+    assert result["ok"] is True and result["models"] == ["llama3.2:3b"]
+    assert called == [], "nothing should be started when the server is already up"
+
+
+def test_load_installed_says_so_when_there_is_nothing_anywhere(tmp_path, monkeypatch):
+    monkeypatch.setenv("OLLAMA_MODELS", str(tmp_path / "nothing"))
+    monkeypatch.setattr(local_llm, "_home", lambda: tmp_path / "nohome")
+    monkeypatch.setattr(local_llm.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(local_llm, "probe_servers", lambda **kw: [])
+    monkeypatch.setattr(local_llm, "start_server", lambda *a, **k: {"ok": False, "detail": "no"})
+    result = local_llm.load_installed()
+    assert result["ok"] is False
+    assert "No model files and no local server" in result["detail"]
+
+
+def test_load_installed_explains_models_that_the_server_will_not_serve(tmp_path, monkeypatch):
+    store = _fake_ollama_store(tmp_path / "models", {"llama3.2:3b": [1000]})
+    monkeypatch.setenv("OLLAMA_MODELS", str(store))
+    monkeypatch.setattr(local_llm, "probe_servers", lambda **kw: [])
+    monkeypatch.setattr(local_llm, "start_server", lambda *a, **k: {"ok": False, "detail": "did not answer"})
+    result = local_llm.load_installed()
+    assert result["ok"] is False
+    assert "llama3.2:3b" in result["detail"] and "not serving them" in result["detail"]
+
+
+def test_status_reports_disk_models_the_server_is_not_listing(tmp_path, monkeypatch):
+    """Settings needs to know "it is on disk but not served" to offer the fix."""
+    store = _fake_ollama_store(tmp_path / "models", {"llama3.2:3b": [1000], "llava": [2000]})
+    monkeypatch.setenv("OLLAMA_MODELS", str(store))
+    monkeypatch.setattr(local_llm, "probe_servers", lambda **kw: [])
+    report = local_llm.status()
+    assert {m["name"] for m in report["on_disk_not_listed"]} == {"llama3.2:3b", "llava"}
+    assert report["disk"]["models"], "the disk scan must survive into the report"
+
+
+# ---------------------------------------------------------------------------
+# /api/local/adopt — the "find the model I downloaded" button
+# ---------------------------------------------------------------------------
+
+def test_adopt_route_needs_the_token(anon):
+    response = anon.post("/api/local/adopt", headers={"Host": "localhost:8000"}, json={})
+    assert response.status_code == 401
+
+
+def test_adopt_finds_a_model_on_disk_and_selects_it(client, tmp_path, monkeypatch, sandbox):
+    store = _fake_ollama_store(tmp_path / "models", {"llama3.2:3b": [1000], "qwen2.5vl:3b": [2000]})
+    monkeypatch.setenv("OLLAMA_MODELS", str(store))
+    monkeypatch.setattr(local_llm, "probe_servers", lambda **kw: [])
+    monkeypatch.setattr(local_llm, "start_server", lambda *a, **k: {"ok": True, "detail": "started"})
+    monkeypatch.setattr(local_llm, "detect_running", lambda **kw: None)
+
+    http, auth = client
+    response = http.post("/api/local/adopt", headers=auth, json={})
+    body = response.json()
+
+    assert response.status_code == 200, body
+    # A vision model wins, because Aegis's core skill is looking at the screen.
+    assert body["model"] == "qwen2.5vl:3b"
+    assert body["vision"] is True
+    assert config.load_config()["llm"]["model"] == "qwen2.5vl:3b"
+
+
+def test_adopt_can_select_one_named_model(client, tmp_path, monkeypatch, sandbox):
+    store = _fake_ollama_store(tmp_path / "models", {"llama3.2:3b": [1000], "llava": [2000]})
+    monkeypatch.setenv("OLLAMA_MODELS", str(store))
+    monkeypatch.setattr(local_llm, "probe_servers", lambda **kw: [])
+    monkeypatch.setattr(local_llm, "detect_running", lambda **kw: None)
+
+    http, auth = client
+    body = http.post("/api/local/adopt", headers=auth, json={"model": "llama3.2:3b"}).json()
+    assert body["model"] == "llama3.2:3b"
+    assert body["vision"] is False
+    assert "cannot see your screen" in body["detail"]
+
+
+def test_adopt_refuses_a_model_that_is_not_on_this_pc(client, tmp_path, monkeypatch, sandbox):
+    """Writing a name the server does not have would 404 on the next message."""
+    monkeypatch.setenv("OLLAMA_MODELS", str(tmp_path / "empty"))
+    monkeypatch.setattr(local_llm, "probe_servers", lambda **kw: [])
+    http, auth = client
+    response = http.post("/api/local/adopt", headers=auth, json={"model": "gpt-5-imaginary"})
+    assert response.status_code == 404
+    assert "not on this PC" in response.json()["detail"]
+
+
+def test_adopt_says_what_to_do_when_there_is_no_model(client, tmp_path, monkeypatch, sandbox):
+    monkeypatch.setenv("OLLAMA_MODELS", str(tmp_path / "empty"))
+    monkeypatch.setattr(local_llm, "_home", lambda: tmp_path / "nohome")
+    monkeypatch.setattr(local_llm.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(local_llm, "probe_servers", lambda **kw: [])
+    monkeypatch.setattr(local_llm, "start_server", lambda *a, **k: {"ok": False, "detail": "no"})
+    http, auth = client
+    response = http.post("/api/local/adopt", headers=auth, json={})
+    assert response.status_code == 409
+    assert response.json()["detail"]
+
+
+def test_status_route_exposes_what_is_on_disk(client, tmp_path, monkeypatch, sandbox):
+    store = _fake_ollama_store(tmp_path / "models", {"llava": [5000]})
+    monkeypatch.setenv("OLLAMA_MODELS", str(store))
+    monkeypatch.setattr(local_llm, "probe_servers", lambda **kw: [])
+    http, auth = client
+    body = http.get("/api/local/status", headers=auth).json()
+    assert [m["name"] for m in body["disk"]["models"]] == ["llava"]
+    assert [m["name"] for m in body["on_disk_not_listed"]] == ["llava"]
+
+
+# ---------------------------------------------------------------------------
+# The local_models tool: "where is my model?" asked in the chat
+# ---------------------------------------------------------------------------
+
+def test_the_agent_can_answer_where_the_models_are(tmp_path, monkeypatch):
+    from aegis.tools import execute_tool
+
+    store = _fake_ollama_store(tmp_path / "models", {"qwen2.5vl:3b": [3_000_000]})
+    monkeypatch.setenv("OLLAMA_MODELS", str(store))
+    monkeypatch.setattr(local_llm, "probe_servers", lambda **kw: [])
+    result = execute_tool("local_models", {})
+    assert result["ok"] is True
+    assert "qwen2.5vl:3b" in result["result"]
+    assert str(store) in result["result"], "the folder is the answer to 'where is it'"
+
+
+def test_the_agent_is_told_when_nothing_is_installed(tmp_path, monkeypatch):
+    from aegis.tools import execute_tool
+
+    monkeypatch.setenv("OLLAMA_MODELS", str(tmp_path / "empty"))
+    monkeypatch.setattr(local_llm, "probe_servers", lambda **kw: [])
+    result = execute_tool("local_models", {})
+    assert result["ok"] is True
+    assert "No AI model files" in result["result"]
+
+
+def test_a_404_names_the_models_that_do_exist(tmp_path, monkeypatch):
+    """The commonest local failure: the config names a model the server lacks."""
+    from aegis.llm import _friendly_model_error
+
+    store = _fake_ollama_store(tmp_path / "models", {"qwen2.5vl:3b": [1000]})
+    monkeypatch.setenv("OLLAMA_MODELS", str(store))
+    monkeypatch.setattr(
+        local_llm, "status",
+        lambda **kw: {"servers": [{"reachable": True, "models": ["llava"]}]},
+    )
+    message = _friendly_model_error(
+        RuntimeError("LLM error 404: model not found"),
+        {"base_url": "http://127.0.0.1:11434/v1", "model": "gemma3"},
+    )
+    assert "gemma3" in message
+    assert "llava" in message                 # what the server does have
+    assert "Find the model I downloaded" in message
