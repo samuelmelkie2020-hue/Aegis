@@ -45,6 +45,10 @@ jobs:
           echo "ok: $(wc -c < site/index.html) bytes"
 
       - uses: actions/configure-pages@v5
+        with:
+          # Enable Pages on the first run instead of failing with "Get Pages
+          # site failed" and leaving the user to find a dashboard toggle.
+          enablement: true
 
       - uses: actions/upload-pages-artifact@v3
         with:
