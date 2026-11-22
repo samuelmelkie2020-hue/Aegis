@@ -848,6 +848,93 @@ def test_a_real_launch_keeps_serving_after_a_browser_fallback():
     assert inspect.signature(desktop.run_desktop).parameters["keep_serving"].default is False
 
 
+def test_a_healthy_window_never_opens_a_browser_tab(monkeypatch, tmp_path):
+    """Regression, and the whole point: v1.12.1 opened a tab on every launch.
+
+    The watchdog fired twelve seconds after startup without ever asking whether
+    a window existed, so a perfectly good native window was accompanied by a
+    browser tab. "Why does the exe open in my browser?" was the bug report.
+    """
+    import aegis.desktop as desktop
+
+    opened: list[str] = []
+    monkeypatch.setattr(desktop, "_open_in_browser", lambda url: opened.append(url) or True)
+    monkeypatch.setattr("aegis.config.DATA_DIR", tmp_path)
+    monkeypatch.delenv("AEGIS_WINDOW_PROOF", raising=False)
+    monkeypatch.delenv("AEGIS_NO_WATCHDOG", raising=False)
+    monkeypatch.setenv("AEGIS_WATCHDOG_SECONDS", "3")
+
+    class LiveWindow:
+        """What pywebview hands back: the object exists and was never closed."""
+
+        window = object()
+
+    desktop._start_window_watchdog("http://127.0.0.1:1234/?token=t", LiveWindow()).join(10)
+    assert opened == [], "a window that is open must not also get a tab"
+
+
+def test_a_finished_or_missing_window_does_earn_a_browser_tab(monkeypatch, tmp_path):
+    """The case the watchdog exists for must still work."""
+    import aegis.desktop as desktop
+
+    opened: list[str] = []
+    monkeypatch.setattr(desktop, "_open_in_browser", lambda url: opened.append(url) or True)
+    monkeypatch.setattr("aegis.config.DATA_DIR", tmp_path)
+    monkeypatch.delenv("AEGIS_WINDOW_PROOF", raising=False)
+    monkeypatch.delenv("AEGIS_NO_WATCHDOG", raising=False)
+    monkeypatch.setenv("AEGIS_WATCHDOG_SECONDS", "3")
+
+    class Gone:
+        window = None
+        closed = True
+
+    desktop._start_window_watchdog("http://127.0.0.1:1234/?token=t", Gone()).join(10)
+    assert opened and opened[0].endswith("?token=t")
+
+
+def test_the_window_probe_cannot_be_fooled_into_closing_a_good_window(monkeypatch):
+    """Only positive evidence of absence may earn a tab."""
+    import aegis.desktop as desktop
+
+    assert desktop._window_is_there(None) is False
+
+    class Opaque:
+        """A backend whose attributes are unknowable: assume the window is fine."""
+
+        def __getattr__(self, name):
+            raise RuntimeError("not supported by this backend")
+
+    assert desktop._window_is_there(Opaque()) is True
+
+    class NoWindow:
+        window = None
+
+    # A None `window` is what pywebview reports once the window is gone.
+    assert desktop._window_is_there(NoWindow()) is False
+
+    class Closed:
+        window = object()
+        closed = True
+
+    assert desktop._window_is_there(Closed()) is False
+
+
+def test_the_launch_arms_the_watchdog_with_the_real_window(fake_webview, monkeypatch):
+    """A watchdog without the window object can only guess — which is the bug."""
+    import aegis.desktop as desktop
+
+    armed: list = []
+    monkeypatch.setattr(
+        desktop, "_start_window_watchdog", lambda url, window=None: armed.append(window) and _FakeTimer()
+    )
+    monkeypatch.setenv("AEGIS_NO_WATCHDOG", "1")
+    monkeypatch.delenv("AEGIS_WINDOW_PROOF", raising=False)
+
+    assert desktop.run_desktop(port=0) == 0
+    assert armed and armed[0] is not None, "the watchdog has to know which window to check"
+    assert hasattr(armed[0], "load_url") or armed[0] is not None
+
+
 def test_a_window_that_never_paints_opens_the_browser_too(monkeypatch, tmp_path):
     """A process that shows nothing is indistinguishable from a crash."""
     import aegis.desktop as desktop
@@ -858,7 +945,7 @@ def test_a_window_that_never_paints_opens_the_browser_too(monkeypatch, tmp_path)
     monkeypatch.delenv("AEGIS_WINDOW_PROOF", raising=False)
     monkeypatch.setenv("AEGIS_WATCHDOG_SECONDS", "3")
 
-    timer = desktop._start_window_watchdog("http://127.0.0.1:1234/?token=t")
+    timer = desktop._start_window_watchdog("http://127.0.0.1:1234/?token=t", None)
     timer.join(10)
     assert opened and opened[0].endswith("?token=t")
     assert "WINDOW SLOW" in (tmp_path / "aegis-startup.log").read_text(encoding="utf-8")
@@ -873,7 +960,7 @@ def test_the_watchdog_stays_out_of_the_way_of_a_window_proof(monkeypatch):
     monkeypatch.setenv("AEGIS_WINDOW_PROOF", "1")
     monkeypatch.setenv("AEGIS_WATCHDOG_SECONDS", "3")
 
-    desktop._start_window_watchdog("http://127.0.0.1:1234/?token=t").join(10)
+    desktop._start_window_watchdog("http://127.0.0.1:1234/?token=t", None).join(10)
     assert opened == []
 
 
@@ -907,8 +994,8 @@ def test_successful_launch_cancels_the_watchdog(fake_webview, monkeypatch):
 
     timers: list = []
 
-    def arm(url):
-        timers.append(url)
+    def arm(url, window=None):
+        timers.append(window)
         return _FakeTimer()
 
     monkeypatch.setattr(desktop, "_start_window_watchdog", arm)
