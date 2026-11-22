@@ -114,6 +114,31 @@ at all. The default provider is `http://127.0.0.1:11434/v1` with no key.
 > in the background (0.6 s per endpoint, no GPU probe); if nothing answers, you get
 > the demo brain and the Settings panel, not a splash screen that never leaves.
 
+### Also looks for LM Studio, Jan and loose model files
+
+Ollama keeps its own layout; the rest of the world keeps `.gguf` files in a folder.
+Aegis reads both. It scans:
+
+- **Ollama's** `manifests/` + `blobs/` (sizes come from the real weights)
+- **LM Studio** (`~/.cache/lm-studio/models`, `~/.lmstudio/models`)
+- **Jan** (`~/Library/Application Support/Jan/data`)
+- **GPT4All**, and your **Downloads** folder
+- Anything you point at with **`AEGIS_MODEL_DIR`**, `LMSTUDIO_MODELS` or `JAN_MODELS_DIR`
+
+The scan is bounded on purpose — four levels deep, a fixed file budget, only the
+folders each app actually uses — because walking a 40 GB model folder every time
+Settings opens would make the app feel broken. Quantisation suffixes are stripped,
+so `qwen2.5-vl-7b-instruct-q4_k_m.gguf` is reported as `qwen2.5-vl-7b-instruct`,
+which is the name a server accepts.
+
+A model file is not something Aegis can load by itself: it needs the app that owns
+that folder running (LM Studio, Jan, …). When that is the case, the panel says so
+and names the app, instead of a click that quietly fails.
+
+Aegis also probes more local servers now: Ollama, LM Studio, llama.cpp, **Jan**
+(`:1337`), **vLLM** (`:8000`), **LocalAI** (`:8081`) and **text-generation-webui**
+(`:5000`). Every one must be loopback, or it is not offered.
+
 ### 🔍 "I downloaded a model — where is it?"
 
 You do not need to know. Open **⚙️ Settings → 💻 This computer** and press
@@ -340,7 +365,7 @@ Environment variables:
 
 ```bash
 pip install -r requirements-dev.txt   # runtime deps + pytest + ruff
-python -m pytest -q                   # 504 tests, ~16s, no display, no API key, no internet
+python -m pytest -q                   # 520 tests, ~17s, no display, no API key, no internet
 ruff check .                          # lint (config lives in pyproject.toml)
 python run.py --self-check            # diagnose a machine: data dir, server, webview
 node --check aegis/static/app.js      # front-end syntax
@@ -499,6 +524,13 @@ than asking for an API key.
 Made with 🛡 — Aegis.
 
 ---
+
+## 🌐 The website
+
+`site/index.html` is a single self-contained page (no CDN, no external script) that
+`vercel.json` deploys as a static site — `outputDirectory: "site"`. It is checked by
+tests: no off-site assets, every download link must point at the current version,
+and the privacy section must keep its honest half.
 
 ## 📄 License
 

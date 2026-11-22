@@ -941,3 +941,114 @@ def test_a_404_names_the_models_that_do_exist(tmp_path, monkeypatch):
     assert "gemma3" in message
     assert "llava" in message                 # what the server does have
     assert "Find the model I downloaded" in message
+
+
+# ---------------------------------------------------------------------------
+# Model *files*: LM Studio, Jan, GPT4All, a GGUF in Downloads
+# ---------------------------------------------------------------------------
+
+def _fake_gguf(path, size=1000):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"G" * size)
+    return path
+
+
+def test_a_gguf_file_is_named_the_way_a_server_would_accept_it(tmp_path, monkeypatch):
+    """`…-q4_k_m.gguf` must not become part of the model name."""
+    downloads = tmp_path / "Downloads"
+    _fake_gguf(downloads / "qwen2.5-vl-3b-instruct-q4_k_m.gguf", 3_000)
+    monkeypatch.setattr(local_llm, "_home", lambda: tmp_path)
+    monkeypatch.setattr(local_llm.platform, "system", lambda: "Linux")
+    found = local_llm.scan_weights(extra_dirs=[downloads])
+
+    assert [m["name"] for m in found] == ["qwen2.5-vl-3b-instruct"]
+    assert found[0]["format"] == "gguf"
+    assert found[0]["vision"] is True
+    assert found[0]["size_bytes"] == 3_000
+
+
+def test_the_file_scan_is_bounded(tmp_path):
+    folder = tmp_path / "models"
+    for index in range(20):
+        _fake_gguf(folder / f"model-{index}.gguf", 10)
+    found = local_llm.scan_weights(limit_files=5, extra_dirs=[folder])
+    assert len(found) == 5, "an unbounded walk of a 20 GB folder would freeze Settings"
+
+
+def test_the_file_scan_respects_its_depth_limit(tmp_path):
+    deep = tmp_path / "models" / "a" / "b" / "c" / "d" / "e"
+    _fake_gguf(deep / "deep.gguf")
+    shallow = tmp_path / "models" / "shallow.gguf"
+    _fake_gguf(shallow)
+    found = local_llm.scan_weights(max_depth=2, extra_dirs=[tmp_path / "models"])
+    names = [m["name"] for m in found]
+    assert "shallow" in names and "deep" not in names
+
+
+def test_non_weight_files_are_ignored(tmp_path):
+    folder = tmp_path / "models"
+    _fake_gguf(folder / "readme.txt")
+    _fake_gguf(folder / "notes.json")
+    _fake_gguf(folder / "real.gguf")
+    found = local_llm.scan_weights(extra_dirs=[folder])
+    assert [m["name"] for m in found] == ["real"]
+
+
+def test_a_custom_folder_can_be_scanned(tmp_path, monkeypatch):
+    monkeypatch.setenv("LMSTUDIO_MODELS", str(tmp_path / "elsewhere"))
+    _fake_gguf(tmp_path / "elsewhere" / "mistral-7b.gguf", 50)
+    monkeypatch.setattr(local_llm.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(local_llm, "_home", lambda: tmp_path / "nohome")
+    found = local_llm.scan_weights()
+    assert [m["name"] for m in found] == ["mistral-7b"]
+    assert "LMSTUDIO_MODELS" in found[0]["folder_note"]
+
+
+def test_find_all_models_merges_both_worlds(tmp_path, monkeypatch):
+    store = _fake_ollama_store(tmp_path / "ollama" / "models", {"llama3.2:3b": [1000]})
+    monkeypatch.setenv("OLLAMA_MODELS", str(store))
+    monkeypatch.setenv("LMSTUDIO_MODELS", str(tmp_path / "lmstudio"))
+    _fake_gguf(tmp_path / "lmstudio" / "mistral-7b.gguf", 2_000_000)
+    monkeypatch.setattr(local_llm, "probe_servers", lambda **kw: [])
+
+    merged = local_llm.find_all_models()
+    assert set(merged["names"]) == {"llama3.2:3b", "mistral-7b"}
+    # Bytes, because 2 MB of GGUF is 0.0 GB at two decimals — a test asserting on
+    # the rounded figure would pass for the wrong reason or fail for no reason.
+    assert merged["total_bytes"] == 1_000 + 2_000_000
+
+
+def test_more_local_servers_are_probed():
+    """People do not only use Ollama and LM Studio."""
+    names = {name for name, _ in local_llm.KNOWN_ENDPOINTS}
+    assert {"Ollama", "LM Studio", "llama.cpp"} <= names
+    assert {"Jan", "vLLM"} <= names
+    # Every endpoint must be loopback, or "local" would be a lie.
+    for _, url in local_llm.KNOWN_ENDPOINTS:
+        assert local_llm.is_local_url(url), url
+
+
+def test_a_model_file_with_no_server_is_explained_not_hidden(tmp_path, monkeypatch):
+    """A GGUF is not something Aegis can load itself — say whose folder it is."""
+    monkeypatch.setenv("LMSTUDIO_MODELS", str(tmp_path / "lmstudio"))
+    _fake_gguf(tmp_path / "lmstudio" / "mistral-7b.gguf", 2000)
+    monkeypatch.setenv("OLLAMA_MODELS", str(tmp_path / "empty"))
+    monkeypatch.setattr(local_llm, "probe_servers", lambda **kw: [])
+    monkeypatch.setattr(local_llm, "start_server", lambda *a, **k: {"ok": False, "detail": "no"})
+
+    result = local_llm.load_installed()
+    assert result["ok"] is False
+    assert result["models"] == ["mistral-7b"]
+    assert "LM Studio" in result["detail"] or "Jan" in result["detail"]
+    assert "no local server is running" in result["detail"]
+
+
+def test_status_route_reports_every_installed_model(client, tmp_path, monkeypatch, sandbox):
+    monkeypatch.setenv("LMSTUDIO_MODELS", str(tmp_path / "lmstudio"))
+    _fake_gguf(tmp_path / "lmstudio" / "mistral-7b.gguf", 2000)
+    monkeypatch.setenv("OLLAMA_MODELS", str(tmp_path / "empty"))
+    monkeypatch.setattr(local_llm, "probe_servers", lambda **kw: [])
+    http, auth = client
+    body = http.get("/api/local/status", headers=auth).json()
+    assert "mistral-7b" in body["all_models"]
+    assert [w["name"] for w in body["weights"]] == ["mistral-7b"]

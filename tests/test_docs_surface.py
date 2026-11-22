@@ -97,3 +97,70 @@ def test_every_request_body_model_is_defined_before_its_route():
                     f"{signature.splitlines()[0][:60]} uses {name}, defined later at line "
                     f"{defined} — FastAPI will ignore the request body"
                 )
+
+
+# ---------------------------------------------------------------------------
+# The landing page (site/index.html, deployed to Vercel)
+# ---------------------------------------------------------------------------
+
+SITE = Path(__file__).resolve().parent.parent / "site" / "index.html"
+
+
+def test_the_landing_page_exists_and_is_self_contained():
+    """It must work offline and in a sandbox: no CDN fonts, no external scripts.
+
+    The app's own stylesheet already depends on Google Fonts as a nicety; a
+    marketing page that cannot render without a third party is a page that
+    sometimes renders as unstyled text.
+    """
+    import re
+
+    html = SITE.read_text(encoding="utf-8")
+    assert "<title>" in html and "Aegis" in html
+    urls = re.findall(r'(?:src|href)="(https?://[^"]+)"', html)
+    offsite = [u for u in urls if not u.startswith("https://github.com/")]
+    assert not offsite, f"the page loads something from somewhere else: {offsite}"
+    assert "<script src" not in html, "no external script tags"
+
+
+def test_the_landing_page_links_to_real_releases():
+    """A download button that 404s is worse than no button."""
+    import re
+
+    html = SITE.read_text(encoding="utf-8")
+    version = (Path(__file__).resolve().parent.parent / "aegis" / "__init__.py").read_text(
+        encoding="utf-8"
+    ).split('__version__ = "')[1].split('"')[0]
+    downloads = re.findall(r'releases/download/([^/"]+)/([^"]+\.zip)', html)
+    assert downloads, "no download links"
+    for tag, asset in downloads:
+        assert tag == f"v{version}", f"page points at {tag}, the app is v{version}"
+        assert asset.startswith("Aegis-"), asset
+
+
+def test_the_landing_page_does_not_overpromise_privacy():
+    """The honest half has to be on the page, not only in SECURITY.md."""
+    html = SITE.read_text(encoding="utf-8")
+    assert "does not sandbox" in html
+    assert "cloud provider" in html.lower()
+    assert "not protected" in html.lower() or "What you should know" in html
+
+
+def test_the_landing_page_has_no_dangling_anchors():
+    import re
+
+    html = SITE.read_text(encoding="utf-8")
+    ids = set(re.findall(r'id="([^"]+)"', html))
+    anchors = set(re.findall(r'href="#([^"]+)"', html))
+    assert not (anchors - ids), f"anchors with no target: {anchors - ids}"
+
+
+def test_vercel_is_told_this_is_a_static_site():
+    """Deploying the repo root would serve Python source as the site."""
+    config = Path(__file__).resolve().parent.parent / "vercel.json"
+    assert config.exists()
+    import json
+
+    data = json.loads(config.read_text(encoding="utf-8"))
+    assert data.get("outputDirectory") == "site"
+    assert "buildCommand" not in data or data["buildCommand"] is None

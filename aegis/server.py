@@ -543,6 +543,12 @@ def local_status() -> dict:
     report.setdefault("hint", local_llm.install_hint())
     report["active_model"] = (cfg.get("llm") or {}).get("model") or ""
     report["servers"] = report.get("servers") or []
+    # One list for the UI: Ollama's models and loose model files, together.
+    report["all_models"] = sorted(
+        {m["name"] for m in (report.get("disk") or {}).get("models", [])}
+        | {w["name"] for w in report.get("weights") or []}
+        | set(report.get("installed") or [])
+    )
     return report
 
 
@@ -642,6 +648,7 @@ def local_adopt(body: LocalAdoptRequest | None = None) -> JSONResponse:
         # keeps a stray request from writing a model that cannot answer into the
         # config, which would turn into a 404 on the user's next message.
         known = set(local_llm.known_model_names())
+        known.update(w["name"] for w in local_llm.scan_weights())
         for server in local_llm.probe_servers(timeout=local_llm.PROBE_TIMEOUT):
             known.update(server.models)
         if requested not in known:

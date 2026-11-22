@@ -522,3 +522,28 @@ def test_clicking_a_model_on_disk_selects_it_without_a_second_press():
     fn = fn[: fn.index("// One press: look in the folders")]
     assert 'body: JSON.stringify({ model: name })' in fn
     assert "setModel.value = data.model" in fn
+
+
+def test_the_panel_shows_models_from_ollama_and_from_loose_files():
+    """One list, because "what do I have?" is one question."""
+    js = (STATIC / "app.js").read_text(encoding="utf-8")
+    fn = js[js.index("function renderDisk("):]
+    fn = fn[: fn.index("async function useFoundModel")]
+    assert "function renderDisk(disk, weights)" in js
+    assert "(weights || [])" in fn
+    # A file-based model is tagged, so "why does clicking this not work?" is
+    # answered on the chip rather than by a failed request.
+    assert "chip-file" in fn
+    assert "entry.file" in fn
+
+
+def test_sizes_never_render_as_zero_gb():
+    """A 274 MB embedding model must not show as "0.0 GB"."""
+    js = (STATIC / "app.js").read_text(encoding="utf-8")
+    assert "function fmtSize(" in js
+    body = js[js.index("function fmtSize("):]
+    body = body[: body.index("function renderLocal")]
+    assert "toFixed(1)} GB" in body and "MB" in body and "kB" in body
+    # The chip uses the byte-precise formatter, not the GB one.
+    disk = js[js.index("function renderDisk("):]
+    assert "fmtSize(bytes)" in disk
