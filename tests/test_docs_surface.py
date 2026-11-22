@@ -63,3 +63,37 @@ def test_the_security_page_names_the_real_token_file():
     assert ".aegis_token" in text
     # The installed locations it documents must match where the app actually puts it.
     assert CONFIG_PATH.parent.name == "Aegis" or "from source" in text
+
+
+def test_every_request_body_model_is_defined_before_its_route():
+    """FastAPI resolves annotations from *module globals at decoration time*.
+
+    A request model defined below its route is silently not recognised: the body
+    is dropped, the handler gets its default, and the endpoint behaves as if the
+    request were ignored. This bit /api/local/adopt once — the model was defined
+    next to /api/chat/stop, 250 lines after the route.
+    """
+    import ast
+    import re
+
+    source = (Path(__file__).resolve().parent.parent / "aegis" / "server.py").read_text(encoding="utf-8")
+    tree = ast.parse(source)
+
+    model_lines: dict[str, int] = {}
+    route_lines: list[tuple[int, str]] = []
+    for node in tree.body:
+        if isinstance(node, ast.ClassDef) and node.name.endswith(("Request", "Body")):
+            model_lines[node.name] = node.lineno
+        elif isinstance(node, ast.FunctionDef):
+            for decorator in node.decorator_list:
+                if isinstance(decorator, ast.Call) and "app" in ast.unparse(decorator.func):
+                    route_lines.append((node.lineno, ast.unparse(node.args)))
+
+    assert model_lines and route_lines
+    for line, signature in route_lines:
+        for name, defined in model_lines.items():
+            if re.search(rf"\b{name}\b", signature):
+                assert defined < line, (
+                    f"{signature.splitlines()[0][:60]} uses {name}, defined later at line "
+                    f"{defined} — FastAPI will ignore the request body"
+                )

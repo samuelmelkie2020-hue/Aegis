@@ -1032,6 +1032,21 @@ kbd {
   white-space: nowrap;
 }
 
+.local-find { margin-top: 12px; display: grid; gap: 6px; justify-items: start; }
+.local-find-note { font-size: 0.82rem; color: var(--muted); line-height: 1.4; }
+.local-find.busy .local-find-note { color: var(--c-dim); }
+
+.local-disk { margin-top: 12px; padding-top: 10px; border-top: 1px dashed var(--c-faint); }
+.local-disk-head { font-size: 0.84rem; color: var(--muted); margin-bottom: 2px; }
+.local-disk-head b { color: var(--c); }
+.local-disk .model-chip { font-size: 0.8rem; }
+.local-disk .chip-size { color: var(--muted); font-variant-numeric: tabular-nums; }
+.disk-path {
+  display: inline-block; max-width: 100%; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left;
+  font-family: var(--font-display); font-size: 0.72rem; color: var(--faint);
+}
+
 .local-models { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 11px; }
 
 .model-chip {

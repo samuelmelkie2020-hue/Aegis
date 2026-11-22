@@ -481,3 +481,44 @@ def test_a_conversation_can_be_saved_without_asking_the_server(html):
     assert "/api/" not in export_fn
     # And the object URL must be released, or the transcript leaks per export.
     assert "revokeObjectURL" in export_fn
+
+
+# ---------------------------------------------------------------------------
+# "I downloaded a model and I cannot find it"
+# ---------------------------------------------------------------------------
+
+def test_there_is_a_button_that_finds_a_model_on_this_pc(html):
+    assert 'id="localFind"' in html
+    assert "Find the model I downloaded" in html
+    # It must be in the settings panel, next to the hardware it runs on.
+    panel = html[html.index('id="localPanel"'):]
+    assert 'id="localFind"' in panel[: panel.index("</section>")]
+
+
+def test_the_find_button_calls_the_adopt_endpoint():
+    js = (STATIC / "app.js").read_text(encoding="utf-8")
+    handler = js[js.index('localFind.addEventListener("click"'):]
+    handler = handler[: handler.index("});\n}")]
+    assert "/api/local/adopt" in handler
+    # Busy state, so a slow disk scan does not look like a dead button.
+    assert "localFind.disabled = true" in handler
+    assert "localFind.disabled = false" in handler
+
+
+def test_what_is_on_disk_is_listed_with_its_size(html):
+    for element in ("localDisk", "localDiskHead", "localDiskModels"):
+        assert f'id="{element}"' in html, f"{element} is missing"
+    js = (STATIC / "app.js").read_text(encoding="utf-8")
+    assert "function renderDisk(" in js
+    assert "entry.size_gb" in js
+    # A model on disk must be clickable — clicking it selects it.
+    assert "useFoundModel(entry.name)" in js
+
+
+def test_clicking_a_model_on_disk_selects_it_without_a_second_press():
+    """The chip posts the name, so the user never has to type a model name."""
+    js = (STATIC / "app.js").read_text(encoding="utf-8")
+    fn = js[js.index("async function useFoundModel"):]
+    fn = fn[: fn.index("// One press: look in the folders")]
+    assert 'body: JSON.stringify({ model: name })' in fn
+    assert "setModel.value = data.model" in fn

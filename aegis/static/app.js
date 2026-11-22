@@ -55,6 +55,12 @@ const localSuggest = document.getElementById("localSuggest");
 const localSuggestText = document.getElementById("localSuggestText");
 const localUse = document.getElementById("localUse");
 const localRefresh = document.getElementById("localRefresh");
+const localFind = document.getElementById("localFind");
+const localFindRow = document.getElementById("localFindRow");
+const localFindNote = document.getElementById("localFindNote");
+const localDisk = document.getElementById("localDisk");
+const localDiskHead = document.getElementById("localDiskHead");
+const localDiskModels = document.getElementById("localDiskModels");
 const localPull = document.getElementById("localPull");
 const pullFill = document.getElementById("pullFill");
 const pullText = document.getElementById("pullText");
@@ -1081,7 +1087,87 @@ function renderLocal(data) {
     localSuggest.hidden = true;
   }
 
+  renderDisk(data.disk || {});
   renderPull(data.pull || {});
+}
+
+// What is physically in Ollama's folders. This is the answer to "I downloaded a
+// model — where is it?", and it does not depend on a server being up.
+function renderDisk(disk) {
+  if (!localDisk) return;
+  const models = disk.models || [];
+  const dirs = disk.dirs || [];
+  if (!models.length) {
+    localDisk.hidden = true;
+    return;
+  }
+  localDisk.hidden = false;
+  const total = disk.total_gb ? ` · ${fmtGb(disk.total_gb * 1e9)} on disk` : "";
+  const where = dirs.length ? dirs[0].path : "";
+  localDiskHead.innerHTML =
+    `📁 <b>${models.length}</b> model${models.length === 1 ? "" : "s"} found on this PC${esc(total)}` +
+    (where ? `<br><span class="disk-path" title="${esc(where)}">${esc(where)}</span>` : "");
+
+  localDiskModels.innerHTML = "";
+  for (const entry of models) {
+    const chip = document.createElement("button");
+    chip.type = "button";
+    chip.className = "model-chip";
+    if (entry.name === (state.settings.llm?.model || "")) chip.classList.add("active");
+    const size = entry.size_gb ? ` <span class="chip-size">${entry.size_gb.toFixed(1)} GB</span>` : "";
+    const eyes = entry.vision ? ' <span class="eyes" title="can see your screen">👁</span>' : "";
+    chip.innerHTML = `${esc(entry.name)}${eyes}${size}`;
+    chip.title = entry.vision
+      ? `${entry.name} — can see your screen. Click to use it.`
+      : `${entry.name} — text only. Click to use it.`;
+    chip.addEventListener("click", () => useFoundModel(entry.name));
+    localDiskModels.appendChild(chip);
+  }
+}
+
+async function useFoundModel(name) {
+  try {
+    const res = await api("/api/local/adopt", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model: name }),
+    });
+    const data = await res.json();
+    if (!res.ok || data.ok === false) throw new Error(data.detail || `server ${res.status}`);
+    setModel.value = data.model;
+    state.settings.llm = { ...(state.settings.llm || {}), model: data.model, base_url: data.base_url };
+    toast(data.detail || `Using ${data.model} ✓`);
+    await loadLocalStatus({ quiet: true });
+    updateModelStatus(state.settings);
+  } catch (err) {
+    toast(`Could not use ${name}: ${err.message || err}`);
+  }
+}
+
+// One press: look in the folders, start Ollama if needed, select a model.
+if (localFind) {
+  localFind.addEventListener("click", async () => {
+    const label = localFind.textContent;
+    localFind.disabled = true;
+    localFind.textContent = "🔍 Looking for models…";
+    localFindNote.textContent = "Reading Ollama's folders on this PC. This can take a few seconds.";
+    try {
+      const res = await api("/api/local/adopt", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+      const data = await res.json();
+      if (!res.ok || data.ok === false) throw new Error(data.detail || `server ${res.status}`);
+      setModel.value = data.model;
+      state.settings.llm = { ...(state.settings.llm || {}), model: data.model, base_url: data.base_url };
+      localFindNote.textContent = data.detail || `Using ${data.model}.`;
+      toast(`Found it: ${data.model} ✓`);
+      await loadLocalStatus({ quiet: true });
+      updateModelStatus(state.settings);
+    } catch (err) {
+      localFindNote.textContent = `⚠ ${err.message || err}`;
+    } finally {
+      localFind.disabled = false;
+      localFind.textContent = label;
+    }
+  });
 }
 
 function renderPull(pull) {

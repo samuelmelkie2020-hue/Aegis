@@ -159,6 +159,18 @@ class LocalPullRequest(BaseModel):
     model: str = ""
 
 
+class LocalAdoptRequest(BaseModel):
+    """Which model to use, and where to look for model files.
+
+    Declared with the other request models on purpose: a model class defined
+    *after* its route is invisible to FastAPI at decoration time, so the body is
+    silently dropped and the request looks like it was ignored.
+    """
+
+    model: str = Field(default="", max_length=200)
+    models_dir: str = Field(default="", max_length=1024)
+
+
 # ---------------------------------------------------------------------------
 # Pages
 # ---------------------------------------------------------------------------
@@ -606,6 +618,80 @@ def local_setup() -> JSONResponse:
             "settings": public_config(load_config()),
             "model": choice["model"],
             "server": server.name,
+        }
+    )
+
+
+@app.post("/api/local/adopt", dependencies=API)
+def local_adopt(body: LocalAdoptRequest | None = None) -> JSONResponse:
+    """Find the model files on this PC, make them usable, and select one.
+
+    This is the button for "I know I downloaded a model and I do not know where
+    it is": it reads Ollama's folders directly (no server needed), starts Ollama
+    if it is installed but not running, and points Aegis at the best model it
+    found — preferring one that can see the screen. Picking a model by name is
+    the same call with ``model`` set.
+    """
+    from . import local_llm
+
+    requested = (body.model if body else "") or ""
+    folder = (body.models_dir if body else "") or ""
+
+    if requested:
+        # Only a name the server or the disk already knows may be selected. This
+        # keeps a stray request from writing a model that cannot answer into the
+        # config, which would turn into a 404 on the user's next message.
+        known = set(local_llm.known_model_names())
+        for server in local_llm.probe_servers(timeout=local_llm.PROBE_TIMEOUT):
+            known.update(server.models)
+        if requested not in known:
+            return JSONResponse(
+                {"ok": False, "detail": f"{requested} is not on this PC. {local_llm.install_hint()}"},
+                status_code=status.HTTP_404_NOT_FOUND,
+            )
+
+    try:
+        result = (
+            {"ok": True, "models": [requested], "detail": ""}
+            if requested
+            else local_llm.load_installed(folder or None)
+        )
+    except Exception as exc:  # a scan must never take the app down
+        log.warning("Local model discovery failed", exc_info=True)
+        return JSONResponse(
+            {"ok": False, "detail": f"Could not look for local models ({str(exc)[:160]})."},
+            status_code=500,
+        )
+
+    models = result.get("models") or []
+    if not models:
+        return JSONResponse(
+            {"ok": False, "detail": result.get("detail") or local_llm.install_hint(),
+             "disk": result.get("disk")},
+            status_code=status.HTTP_409_CONFLICT,
+        )
+
+    server = local_llm.detect_running(timeout=local_llm.PROBE_TIMEOUT)
+    base = local_llm.normalise_base(server.base_url) if server else "http://127.0.0.1:11434/v1"
+    choice = local_llm.recommend(local_llm.cached_hardware(), models)
+    model = requested or choice.get("model") or models[0]
+    try:
+        save_config({"llm": {"base_url": base, "model": model, "api_key": ""}})
+    except SettingsError as exc:
+        return JSONResponse({"ok": False, "detail": str(exc)}, status_code=400)
+    return JSONResponse(
+        {
+            "ok": True,
+            "model": model,
+            "base_url": base,
+            "models": models,
+            "vision": local_llm.has_vision(model),
+            "started": bool(result.get("started")),
+            "detail": (
+                f"Using {model} — it runs on this PC, so no key and nothing leaves it."
+                if local_llm.has_vision(model)
+                else f"Using {model}. It is a text model, so it cannot see your screen yet."
+            ),
         }
     )
 

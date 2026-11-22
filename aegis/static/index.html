@@ -220,6 +220,23 @@
         </div>
         <p class="local-hint" id="localHint">Checking for a local AI server…</p>
 
+        <!-- "I downloaded a model and I cannot find it": one press looks in
+             Ollama's folders, starts the server if needed, and selects a model. -->
+        <div class="local-find" id="localFindRow">
+          <button class="btn primary small" type="button" id="localFind">
+            🔍 Find the model I downloaded
+          </button>
+          <p class="local-find-note" id="localFindNote">
+            Looks in Ollama's folders on this PC, even if Ollama is not running.
+          </p>
+        </div>
+
+        <!-- What is physically on the disk, with its real size. -->
+        <div class="local-disk" id="localDisk" hidden>
+          <p class="local-disk-head" id="localDiskHead"></p>
+          <div class="local-models" id="localDiskModels"></div>
+        </div>
+
         <dl class="local-specs" id="localSpecs" hidden>
           <div><dt>Processor</dt><dd id="localCpu">—</dd></div>
           <div><dt>Memory</dt><dd id="localRam">—</dd></div>
