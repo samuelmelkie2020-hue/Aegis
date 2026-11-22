@@ -383,7 +383,7 @@ Environment variables:
 
 ```bash
 pip install -r requirements-dev.txt   # runtime deps + pytest + ruff
-python -m pytest -q                   # 541 tests, ~17s, no display, no API key, no internet
+python -m pytest -q                   # 545 tests, ~17s, no display, no API key, no internet
 ruff check .                          # lint (config lives in pyproject.toml)
 python run.py --self-check            # diagnose a machine: data dir, server, webview
 node --check aegis/static/app.js      # front-end syntax

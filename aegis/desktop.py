@@ -953,7 +953,7 @@ def run_desktop(
         proof_ok = True
         # If the window never actually paints, this is what gets the user into
         # the app instead of leaving a process with nothing on screen.
-        watchdog = _start_window_watchdog(app_url)
+        watchdog = _start_window_watchdog(app_url, window)
         if os.environ.get("AEGIS_WINDOW_PROOF"):
             # Record the proof, then leave the process alone: CI kills it once it
             # has read this line. Closing a GUI from another thread is what turned
@@ -998,16 +998,57 @@ def run_desktop(
     return 0
 
 
-def _start_window_watchdog(url: str) -> threading.Timer:
-    """Open a browser tab if no native window has painted within a few seconds.
+def _window_is_there(window) -> bool:
+    """Is the native window still alive, as far as the backend will say?
 
-    Three different failures all look the same to a user who double-clicked the
+    pywebview exposes no "is it visible?" call, so this asks the two things that
+    are actually observable: the window object exists and the backend has not
+    reported it destroyed. Anything unanswerable counts as **present** — the
+    watchdog must never be the reason a browser tab appears.
+
+    This exists because the first version of the watchdog did not ask at all: it
+    opened a tab twelve seconds after every launch, including launches where the
+    window was open and in use. "It opens in my browser" was a bug, not a
+    fallback.
+    """
+    if window is None:
+        return False
+    # Only positive evidence closes this question. `native` is legitimately None
+    # on a window that is open and in use (it is populated by some backends
+    # only), so a None attribute proves nothing — asserting on it turned a
+    # healthy window into "gone" and reopened the very tab this prevents.
+    #
+    # `window` (pywebview's own handle to the OS window) IS the evidence: it is
+    # set when the window exists and None once the backend has torn it down.
+    try:
+        declares_window = "window" in dir(window) or hasattr(type(window), "window")
+        if declares_window and getattr(window, "window", None) is None:
+            return False
+    except Exception:  # pragma: no cover - a backend that raises is not evidence
+        pass
+    try:
+        if getattr(window, "closed", False):
+            return False
+    except Exception:  # pragma: no cover - older pywebview
+        pass
+    return True
+
+
+def _start_window_watchdog(url: str, window=None) -> threading.Timer:
+    """Open a browser tab only if the native window really is not there.
+
+    Three different failures look identical to a user who double-clicked the
     exe: the window is created and painted off-screen, the backend throws while
     nobody is watching, or ``webview.start()`` blocks without raising. In all of
     them the honest answer is "you already have the app" — so after
-    ``AEGIS_WATCHDOG_SECONDS`` seconds, if the user is still looking at nothing,
-    open the browser. A tab is not ideal, but it beats a process that seems to
-    have done nothing, and it is the same app on the same token URL.
+    ``AEGIS_WATCHDOG_SECONDS`` seconds, if the window is **not** alive, open the
+    browser. A tab is not ideal, but it beats a process that seems to have done
+    nothing, and it is the same app on the same token URL.
+
+    ``window`` is what makes this safe to leave switched on: with a healthy
+    window the timer does nothing at all. It is polled rather than cancelled
+    because ``webview.start()`` blocks on this thread and cannot tell us when
+    the window was shown — only that it has not gone away.
 
     Disabled by ``AEGIS_NO_WATCHDOG=1`` (a test that wants to inspect a fake
     window without a browser opening on the runner) and skipped entirely for a
@@ -1018,8 +1059,13 @@ def _start_window_watchdog(url: str) -> threading.Timer:
             return
         if os.environ.get("AEGIS_NO_WATCHDOG"):
             return
+        if _window_is_there(window):
+            # The window is open. This is the normal case, and the whole reason
+            # the check exists: opening a tab here is what "it opens in my
+            # browser" looked like.
+            return
         _write_heartbeat(
-            "WINDOW SLOW: no visible window yet — opening the browser as well"
+            "WINDOW SLOW: the native window is gone — opening the browser as well"
         )
         try:
             _open_in_browser(url)
