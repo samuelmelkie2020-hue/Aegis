@@ -37,11 +37,26 @@ from urllib.parse import urlsplit
 import httpx
 
 # Where local servers listen by default. Aegis checks these in order.
+# Where local servers listen by default. Aegis checks these in order. The first
+# three are the common ones; the rest are other apps people actually use, and
+# probing them costs one refused connection each (instant on loopback).
 KNOWN_ENDPOINTS: tuple[tuple[str, str], ...] = (
     ("Ollama", "http://127.0.0.1:11434"),
     ("LM Studio", "http://127.0.0.1:1234"),
     ("llama.cpp", "http://127.0.0.1:8080"),
+    ("Jan", "http://127.0.0.1:1337"),
+    ("vLLM", "http://127.0.0.1:8000"),
+    ("LocalAI", "http://127.0.0.1:8081"),
+    ("text-generation-webui", "http://127.0.0.1:5000"),
 )
+
+# Extensions that are always model weights, and never something to read.
+WEIGHT_SUFFIXES: tuple[str, ...] = (".gguf", ".safetensors", ".bin", ".mlx", ".onnx")
+
+# Folders that hold LM Studio / Jan / plain GGUF downloads. Ollama keeps its own
+# layout (below); these are the "I downloaded a file and put it somewhere" cases,
+# which is most of the rest of the world.
+GGUF_FOLDER_NAMES: tuple[str, ...] = ("models", "Models", "lmstudio", "LM Studio", "jan", "gguf")
 
 # Models that can see a screenshot. Aegis's core skills are visual, so this is
 # what the recommendation aims at; text-only models still work, minus the eyes.
@@ -749,6 +764,7 @@ def status(*, include: str | None = None) -> dict[str, Any]:
     # model — where did it go?". Nothing here starts a process; that is the
     # explicit /api/local/adopt action, because opening Settings must stay cheap.
     disk = scan_disk()
+    weights = scan_weights()
     return {
         "hardware": hardware.as_dict(),
         "servers": [s.as_dict() for s in servers],
@@ -759,6 +775,7 @@ def status(*, include: str | None = None) -> dict[str, Any]:
         "ollama_installed": bool(shutil.which("ollama")),
         "hint": install_hint(),
         "disk": disk,
+        "weights": weights,
         "on_disk_not_listed": [
             m for m in disk["models"] if m["name"] not in set(installed)
         ],
@@ -1006,6 +1023,161 @@ def known_model_names() -> list[str]:
         return []
 
 
+def weight_dirs() -> list[tuple[Path, str]]:
+    """Folders that hold model *files* (not Ollama's manifest layout).
+
+    Deliberately not a whole-disk search: a scan of the whole disk on every Settings open is
+    a good way to make the app feel broken. These are the places each app puts
+    models by default, plus anything the user pointed at with an env var.
+    """
+    home = _home()
+    system = platform.system()
+    candidates: list[tuple[Path, str]] = []
+    for key, note in (
+        ("AEGIS_MODEL_DIR", "set by AEGIS_MODEL_DIR"),
+        ("LMSTUDIO_MODELS", "set by LMSTUDIO_MODELS"),
+        ("JAN_MODELS_DIR", "set by JAN_MODELS_DIR"),
+    ):
+        value = (os.environ.get(key) or "").strip()
+        if value:
+            candidates.append((Path(value).expanduser(), note))
+    if system == "Windows":
+        local = Path(os.environ.get("LOCALAPPDATA") or home / "AppData" / "Local")
+        candidates.append((home / ".cache" / "lm-studio" / "models", "LM Studio's default folder"))
+        candidates.append((home / ".lmstudio" / "models", "LM Studio's default folder"))
+        candidates.append((local / "nomic.ai" / "GPT4All", "GPT4All's models"))
+        candidates.append((home / "Downloads", "your Downloads folder"))
+    elif system == "Darwin":
+        candidates.append((home / ".cache" / "lm-studio" / "models", "LM Studio's default folder"))
+        candidates.append((home / ".lmstudio" / "models", "LM Studio's default folder"))
+        candidates.append((home / "Library" / "Application Support" / "Jan" / "data", "Jan's data folder"))
+        candidates.append((home / "Downloads", "your Downloads folder"))
+    else:
+        candidates.append((home / ".cache" / "lm-studio" / "models", "LM Studio's default folder"))
+        candidates.append((home / ".lmstudio" / "models", "LM Studio's default folder"))
+        candidates.append((home / ".local" / "share" / "nomic.ai" / "GPT4All", "GPT4All's models"))
+        candidates.append((home / "Downloads", "your Downloads folder"))
+    out: list[tuple[Path, str]] = []
+    seen: set[str] = set()
+    for path, note in candidates:
+        key = str(path)
+        if key in seen:
+            continue
+        seen.add(key)
+        try:
+            if path.is_dir():
+                out.append((path, note))
+        except OSError:
+            continue
+    return out
+
+
+def gguf_name(path: Path) -> str:
+    """A model name a server would actually accept, from a file name.
+
+    ``qwen2.5-vl-3b-instruct-q4_k_m.gguf`` → ``qwen2.5-vl-3b-instruct``. The
+    quantisation suffix is dropped because every server keys off the base name
+    and the quant is a detail of the file, not of the model.
+    """
+    stem = path.stem
+    lowered = stem.lower()
+    for marker in ("-q4_k_m", "-q4_0", "-q5_k_m", "-q8_0", "-q6_k", "-q4_k_s", "-f16", "-fp16", "-iq4_xs"):
+        index = lowered.find(marker)
+        if index > 0:
+            stem = stem[:index]
+            break
+    return stem
+
+
+def scan_weights(
+    *, limit_files: int = 400, max_depth: int = 4, extra_dirs: list[Path] | None = None
+) -> list[dict[str, Any]]:
+    """Model *files* found in the usual folders, with their real sizes.
+
+    Bounded on purpose: at most ``limit_files`` files, ``max_depth`` levels deep,
+    and only the folders each app actually uses. A model weights folder can hold
+    tens of gigabytes and thousands of shards; the UI needs names and sizes, not
+    a filesystem crawl.
+    """
+    found: dict[str, dict[str, Any]] = {}
+    budget = limit_files
+    for root, note in list(weight_dirs()) + [(p, "chosen by you") for p in (extra_dirs or [])]:
+        depth_root = len(root.parts)
+        try:
+            walker = os.walk(root)
+            for dirpath, dirnames, filenames in walker:
+                current = Path(dirpath)
+                if len(current.parts) - depth_root >= max_depth:
+                    dirnames[:] = []
+                dirnames[:] = [d for d in dirnames if not d.startswith(".")]
+                for filename in filenames:
+                    if budget <= 0:
+                        return sorted(found.values(), key=lambda m: (-m["size_bytes"], m["name"]))
+                    if not filename.lower().endswith(WEIGHT_SUFFIXES):
+                        continue
+                    budget -= 1
+                    path = current / filename
+                    try:
+                        size = path.stat().st_size
+                    except OSError:
+                        continue
+                    name = gguf_name(path)
+                    if name in found and found[name]["size_bytes"] >= size:
+                        continue
+                    found[name] = {
+                        "name": name,
+                        "path": str(path),
+                        "format": path.suffix.lstrip(".").lower(),
+                        "size_bytes": size,
+                        "size_gb": round(size / 1e9, 2),
+                        "vision": has_vision(name),
+                        "folder": str(root),
+                        "folder_note": note,
+                    }
+        except OSError:
+            continue
+    return sorted(found.values(), key=lambda m: (-m["size_bytes"], m["name"]))
+
+
+def installed_bytes(ollama_models: list[dict[str, Any]], weights: list[dict[str, Any]]) -> int:
+    """Combined size of everything installed, in bytes.
+
+    Bytes, not GB: a 900 MB model and a 4.7 GB one must not each be rounded
+    before being added, or the total drifts by a gigabyte. The UI formats this.
+    """
+    total = sum(int(m.get("size_bytes") or 0) for m in ollama_models)
+    total += sum(int(w.get("size_bytes") or 0) for w in weights)
+    return total
+
+
+def find_all_models() -> dict[str, Any]:
+    """Everything installed, from both worlds: Ollama's layout and model files.
+
+    One answer for the UI, so "what have I got?" is never two half-answers.
+    """
+    ollama = scan_disk()
+    weights = scan_weights()
+    served: list[str] = []
+    servers: list[dict[str, Any]] = []
+    try:
+        for server in probe_servers(timeout=PROBE_TIMEOUT):
+            if server.reachable:
+                servers.append(server.as_dict())
+                served.extend(server.models)
+    except Exception:  # pragma: no cover - a probe must never break a scan
+        pass
+    names = {m["name"] for m in ollama["models"]} | {w["name"] for w in weights}
+    return {
+        "ollama": ollama,
+        "weights": weights,
+        "servers": servers,
+        "served": sorted(set(served)),
+        "names": sorted(names),
+        "total_bytes": installed_bytes(ollama["models"], weights),
+        "total_gb": round(installed_bytes(ollama["models"], weights) / 1e9, 2),
+    }
+
+
 def start_server(models_dir: Path | None = None, *, timeout: float = 20.0) -> dict[str, Any]:
     """Start Ollama in the background so the user does not have to open a terminal.
 
@@ -1085,7 +1257,7 @@ def load_installed(models_dir: Path | None = None, *, base_url: str = "") -> dic
             "disk": disk,
         }
 
-    if not disk["models"] and not running:
+    if not disk["models"] and not scan_weights() and not running:
         return {
             "ok": False,
             "started": False,
@@ -1112,7 +1284,26 @@ def load_installed(models_dir: Path | None = None, *, base_url: str = "") -> dic
             "disk": disk,
         }
 
-    on_disk = [m["name"] for m in disk["models"]]
+    weights = scan_weights()
+    on_disk = [m["name"] for m in disk["models"]] + [w["name"] for w in weights]
+    if weights and not after:
+        # A GGUF on disk is only usable by a server that knows where it is: point
+        # the user at the app that owns the folder rather than pretending Aegis
+        # can load weights itself.
+        where = weights[0].get("folder_note") or weights[0].get("folder") or ""
+        return {
+            "ok": False,
+            "started": started.get("ok", False),
+            "models": [w["name"] for w in weights],
+            "disk": disk,
+            "weights": weights,
+            "detail": (
+                f"Found {len(weights)} model file(s) on disk ({where}), but no local server is "
+                "running them. Open the app that owns that folder (LM Studio, Jan, GPT4All…), "
+                "load the model there, then press Refresh — Aegis will use it. "
+                "Ollama needs GGUF files imported before it can serve them."
+            ),
+        }
     if on_disk and target is not None:
         return {
             "ok": False,

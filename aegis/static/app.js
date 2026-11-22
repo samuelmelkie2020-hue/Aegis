@@ -1026,6 +1026,16 @@ function fmtGb(n) {
   return n ? `${Number(n).toFixed(1)} GB` : "unknown";
 }
 
+// Sizes the way a person reads them: never "0.0 GB" for a 900 MB model, which is
+// what a fixed-GB format shows for anything under 100 MB.
+function fmtSize(bytes) {
+  const n = Number(bytes) || 0;
+  if (!n) return "size unknown";
+  if (n >= 1e9) return `${(n / 1e9).toFixed(1)} GB`;
+  if (n >= 1e6) return `${Math.round(n / 1e6)} MB`;
+  return `${Math.max(1, Math.round(n / 1e3))} kB`;
+}
+
 function renderLocal(data) {
   if (!data) return;
   const hw = data.hardware || {};
@@ -1087,23 +1097,38 @@ function renderLocal(data) {
     localSuggest.hidden = true;
   }
 
-  renderDisk(data.disk || {});
+  renderDisk(data.disk || {}, data.weights || []);
   renderPull(data.pull || {});
 }
 
 // What is physically in Ollama's folders. This is the answer to "I downloaded a
 // model — where is it?", and it does not depend on a server being up.
-function renderDisk(disk) {
+function renderDisk(disk, weights) {
   if (!localDisk) return;
-  const models = disk.models || [];
+  // Blend both worlds into one list: Ollama's manifest layout and loose model
+  // files (LM Studio, Jan, GPT4All, a GGUF in Downloads). The user has one
+  // question — "what do I have?" — so there should be one answer.
+  const files = (weights || []).map((w) => ({
+    name: w.name,
+    size_gb: w.size_gb,
+    size_bytes: w.size_bytes,
+    vision: w.vision,
+    file: true,
+    folder: w.folder,
+    folder_note: w.folder_note,
+  }));
+  const seen = new Set(files.map((f) => f.name));
+  const models = [...(disk.models || []).filter((m) => !seen.has(m.name)), ...files];
   const dirs = disk.dirs || [];
   if (!models.length) {
     localDisk.hidden = true;
     return;
   }
   localDisk.hidden = false;
-  const total = disk.total_gb ? ` · ${fmtGb(disk.total_gb * 1e9)} on disk` : "";
-  const where = dirs.length ? dirs[0].path : "";
+  const totalBytes =
+    models.reduce((sum, m) => sum + (m.size_gb || 0) * 1e9, 0);
+  const total = totalBytes ? ` · ${fmtGb(totalBytes)} on disk` : "";
+  const where = models.find((m) => m.file)?.folder || (dirs.length ? dirs[0].path : "");
   localDiskHead.innerHTML =
     `📁 <b>${models.length}</b> model${models.length === 1 ? "" : "s"} found on this PC${esc(total)}` +
     (where ? `<br><span class="disk-path" title="${esc(where)}">${esc(where)}</span>` : "");
@@ -1114,12 +1139,16 @@ function renderDisk(disk) {
     chip.type = "button";
     chip.className = "model-chip";
     if (entry.name === (state.settings.llm?.model || "")) chip.classList.add("active");
-    const size = entry.size_gb ? ` <span class="chip-size">${entry.size_gb.toFixed(1)} GB</span>` : "";
+    const bytes = entry.size_bytes || (entry.size_gb || 0) * 1e9;
+    const size = bytes ? ` <span class="chip-size">${fmtSize(bytes)}</span>` : "";
     const eyes = entry.vision ? ' <span class="eyes" title="can see your screen">👁</span>' : "";
-    chip.innerHTML = `${esc(entry.name)}${eyes}${size}`;
-    chip.title = entry.vision
-      ? `${entry.name} — can see your screen. Click to use it.`
-      : `${entry.name} — text only. Click to use it.`;
+    const fileTag = entry.file ? ' <span class="chip-file" title="a model file, not an Ollama model">file</span>' : "";
+    chip.innerHTML = `${esc(entry.name)}${eyes}${size}${fileTag}`;
+    chip.title = entry.file
+      ? `${entry.name} — a model file in ${entry.folder}. Load it in the app that owns that folder, then click.`
+      : entry.vision
+        ? `${entry.name} — can see your screen. Click to use it.`
+        : `${entry.name} — text only. Click to use it.`;
     chip.addEventListener("click", () => useFoundModel(entry.name));
     localDiskModels.appendChild(chip);
   }

@@ -1041,6 +1041,11 @@ kbd {
 .local-disk-head b { color: var(--c); }
 .local-disk .model-chip { font-size: 0.8rem; }
 .local-disk .chip-size { color: var(--muted); font-variant-numeric: tabular-nums; }
+.local-disk .chip-file {
+  font-family: var(--font-display); font-size: 0.62rem; letter-spacing: 0.08em;
+  text-transform: uppercase; color: var(--faint);
+  border: 1px solid var(--c-faint); padding: 0 3px;
+}
 .disk-path {
   display: inline-block; max-width: 100%; overflow: hidden;
   text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left;
