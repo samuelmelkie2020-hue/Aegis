@@ -222,6 +222,44 @@ def index(request: Request, token: str | None = Query(default=None)):
     return response
 
 
+@app.get("/__window-trouble")
+def window_trouble(request: Request) -> Response:
+    """The page a browser fallback lands on: what broke, and how to report it.
+
+    Deliberately not under /api: the user is not "calling the API", they opened
+    the tab Aegis gave them, and it has to render without the token dance. It
+    shows only what the query string carries (an error message) and a link to
+    the report — no settings, no paths, no token.
+    """
+    from .desktop import window_trouble_page
+
+    return HTMLResponse(
+        window_trouble_page(request.query_params.get("reason", "")),
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@app.get("/api/diagnose.txt", dependencies=API)
+def diagnose_text() -> Response:
+    """The `--diagnose` report as a download, for a build with no console.
+
+    A windowed exe has nowhere to print, so "attach the report to an issue"
+    needs a button. It is built from the same facts as `--diagnose` and carries
+    no token, no API key and no conversation.
+    """
+    from .desktop import diagnosis_report
+
+    body = "\n".join(diagnosis_report()) + "\n"
+    return Response(
+        content=body,
+        media_type="text/plain; charset=utf-8",
+        headers={
+            "Content-Disposition": 'attachment; filename="aegis-diagnose.txt"',
+            "Cache-Control": "no-store",
+        },
+    )
+
+
 @app.get("/config.js")
 def config_js(request: Request) -> Response:
     """Session bootstrap for the page, deliberately NOT under /api.
