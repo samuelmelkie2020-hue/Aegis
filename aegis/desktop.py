@@ -491,20 +491,37 @@ def _webview2_version() -> str | None:
 
 
 def diagnose() -> int:
-    """A shareable report for "it does not open".
+    """Print the report from :func:`diagnosis_report` and save it to the data dir."""
+    _ensure_streams()
+    report = diagnosis_report()
+    for line in report:
+        print(line)
+    try:
+        from .config import DATA_DIR
+
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        (DATA_DIR / "aegis-diagnose.txt").write_text("\n".join(report) + "\n", encoding="utf-8")
+    except Exception:  # pragma: no cover - diagnostics must never raise
+        pass
+    return 0
+
+
+def diagnosis_report() -> list[str]:
+    """The facts behind "it does not open", as lines.
 
     Deliberately not a pass/fail check like ``--self-check``: the question here
-    is *why* nothing appeared, so it prints the facts a maintainer needs — the
-    webview backend, whether WebView2 is present, whether another copy already
-    holds the port, and whether a crash or startup log exists — and says which
-    of them is the likely culprit.
+    is *why* nothing appeared, so it records what a maintainer needs — the
+    webview backend, whether WebView2 is present and which version, whether
+    another copy already holds the port, and what the last startup wrote — and
+    says which of them is the likely culprit.
+
+    Returns the lines so ``Aegis.exe --diagnose``, the saved report and the
+    download button in the fallback page are all the same text.
     """
-    _ensure_streams()
     report: list[str] = []
 
     def say(line: str = "") -> None:
         report.append(line)
-        print(line)
 
     from . import __version__
 
@@ -623,13 +640,7 @@ def diagnose() -> int:
     say("It serves the same app on 127.0.0.1 and opens your normal browser.")
     say("")
     say("Copy this report when asking for help. It contains no API key and no token.")
-    try:
-        from .config import DATA_DIR as dir_for_logs
-
-        (dir_for_logs / "aegis-diagnose.txt").write_text("\n".join(report) + "\n", encoding="utf-8")
-    except Exception:  # pragma: no cover
-        pass
-    return 0
+    return report
 
 
 def platform_description() -> str:
@@ -733,6 +744,47 @@ def _swallow(func) -> None:
         log.warning("Error window failed", exc_info=True)
 
 
+WINDOW_TROUBLE_PAGE = """<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<title>Aegis — the window would not open</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin:0; min-height:100vh; display:grid; place-items:center;
+         background:#060b16; color:#e6edf7;
+         font:16px/1.65 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width:38rem; padding:2rem; }
+  h1 { font-size:1.35rem; margin:0 0 .3rem; }
+  .sub { color:#8fa3bf; margin:0 0 1.4rem; }
+  ol { padding-left:1.2rem; margin:0 0 1.4rem; }
+  li { margin:.45rem 0; }
+  code { background:#0f172a; border:1px solid #24314a; border-radius:.4rem;
+         padding:.12rem .4rem; color:#7fe7ff; font-size:.94em; }
+  .reason { background:#14202f; border:1px solid #24314a; border-left:3px solid #ffb454;
+            border-radius:.4rem; padding:.7rem .9rem; margin:0 0 1.4rem;
+            color:#cfe3ff; white-space:pre-wrap; word-break:break-word; }
+  .btn { display:inline-block; background:#00e5ff; color:#02121a; font-weight:700;
+         text-decoration:none; padding:.6rem 1rem; border-radius:.5rem; }
+  .ok { color:#3dffb0; font-weight:600; }
+</style></head><body><main>
+  <h1>This tab is a fallback, not the app</h1>
+  <p class="sub">Aegis is running and working — but its own window did not open, so it
+  put the app here instead. That is a bug worth fixing, not a thing to live with.</p>
+  <p class="reason">__REASON__</p>
+  <p><span class="ok">The app itself is fine:</span> this tab is served by the same
+  local Aegis, with your settings and models. Nothing is lost.</p>
+  <ol>
+    <li><b>Get the report.</b> Press the button below and save the file. It contains no
+    token and no API key.</li>
+    <li><b>Open a free issue</b> with that file attached:
+    <code>github.com/samuelmelkie2020-hue/Aegis/issues</code></li>
+    <li><b>Meanwhile</b> keep using this tab, or run <code>Aegis.exe --web</code> next time
+    to go straight to the browser and skip the window entirely.</li>
+  </ol>
+  <p><a class="btn" href="/api/diagnose.txt" download="aegis-diagnose.txt">Download the report</a></p>
+</main></body></html>
+"""
+
+
 def _open_in_browser(url: str) -> bool:
     """Last resort: the same app, in the browser the machine already has."""
     try:
@@ -760,7 +812,7 @@ def _fallback_to_browser(url: str, reason: str) -> None:
     )
     _print_safe(f"\n  {message}\n")
     _write_heartbeat(f"window FAILED ({reason}) — using the browser instead")
-    if _open_in_browser(url):
+    if _open_in_browser(_trouble_url(url, reason)):
         return
     # No browser either: at least leave the URL somewhere the user will find it,
     # and keep the server alive so pasting it works.
@@ -773,6 +825,38 @@ def _fallback_to_browser(url: str, reason: str) -> None:
         )
     except Exception:  # pragma: no cover
         pass
+
+
+def _trouble_url(app_url: str, reason: str) -> str:
+    """Point a fallback tab at a page that explains itself.
+
+    Opening the bare app URL hides the one thing the user needs to know: this is
+    the fallback, and it is worth reporting. The page is served by the same
+    server (see the ``/__window-trouble`` route) because a data: or file: URL
+    would lose the session cookie and land on a login prompt.
+    """
+    from urllib.parse import quote, urlsplit, urlunsplit
+
+    parts = urlsplit(app_url)
+    token = ""
+    for chunk in (parts.query or "").split("&"):
+        if chunk.startswith("token="):
+            token = chunk
+    query = "&".join(filter(None, [token, f"reason={quote(reason[:500])}"]))
+    return urlunsplit((parts.scheme, parts.netloc, "/__window-trouble", query, ""))
+
+
+def window_trouble_page(reason: str) -> str:
+    """The page a fallback tab lands on.
+
+    The reason is untrusted (it comes from a query string), so it is escaped
+    here rather than in the template — a page that reports a bug must not add
+    one.
+    """
+    from html import escape
+
+    detail = escape((reason or "").strip()[:500]) or "No reason was recorded."
+    return WINDOW_TROUBLE_PAGE.replace("__REASON__", detail)
 
 
 def _keep_serving(handle: ServerHandle, *, wait_forever: bool = False) -> bool:

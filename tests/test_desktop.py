@@ -1015,3 +1015,79 @@ class _FakeTimer:
 
     def cancel(self) -> None:
         self.cancelled = True
+
+
+# ---------------------------------------------------------------------------
+# "Still won't open": the tab has to explain itself and offer the report
+# ---------------------------------------------------------------------------
+
+def test_the_fallback_opens_a_page_that_says_it_is_a_fallback(monkeypatch, tmp_path):
+    """A tab that looks like the app hides the bug instead of reporting it."""
+    import aegis.desktop as desktop
+
+    opened: list[str] = []
+    monkeypatch.setattr(desktop, "_open_in_browser", lambda url: opened.append(url) or True)
+    monkeypatch.setattr("aegis.config.DATA_DIR", tmp_path)
+
+    desktop._fallback_to_browser("http://127.0.0.1:8000/?token=abc", "no WebView2 found")
+
+    assert opened, "the fallback must open something"
+    url = opened[0]
+    assert "/__window-trouble" in url, "not the app URL: the user needs the explanation"
+    assert "token=abc" in url, "the tab still needs its session"
+    assert "no%20WebView2%20found" in url or "no+WebView2+found" in url
+
+
+def test_the_trouble_page_escapes_the_reason():
+    """The reason arrives in a query string: a page about a bug must not add one."""
+    from aegis.desktop import window_trouble_page
+
+    html = window_trouble_page("<script>alert(1)</script>")
+    assert "<script>alert(1)" not in html
+    assert "&lt;script&gt;" in html
+    # And the call to action is present, because the point is to get a report.
+    assert "/api/diagnose.txt" in html
+    assert "issues" in html
+
+
+def test_the_trouble_page_survives_an_empty_reason():
+    from aegis.desktop import window_trouble_page
+
+    assert "No reason was recorded" in window_trouble_page("")
+
+
+def test_the_diagnosis_report_is_reusable_text(client):
+    """`--diagnose`, the saved file and the download button must not drift."""
+    from aegis.desktop import diagnose, diagnosis_report
+
+    lines = diagnosis_report()
+    assert lines[0].startswith("Aegis ")
+    assert any("data dir" in line for line in lines)
+    assert lines[-1].startswith("Copy this report")
+
+    imported = __import__("inspect").getsource(diagnose)
+    assert "diagnosis_report()" in imported, "the CLI has to use the same text"
+
+
+def test_the_report_download_carries_no_secrets(client):
+    """It leaves the machine and gets attached to a public issue."""
+    http, auth = client
+    response = http.get("/api/diagnose.txt", headers=auth)
+    assert response.status_code == 200
+    assert "attachment" in response.headers["content-disposition"]
+    body = response.text
+    assert body.startswith("Aegis ")
+    token = auth.get("X-Aegis-Token", "")
+    if token:
+        assert token not in body, "the access token must never be in a report"
+    assert "api_key" not in body.lower() or "no api key" in body.lower()
+
+
+def test_the_trouble_page_needs_no_token(client):
+    """The user opened a tab; they are not calling the API."""
+    http, _auth = client
+    response = http.get("/__window-trouble?reason=no%20display")
+    assert response.status_code == 200
+    assert "This tab is a fallback" in response.text
+    assert "no display" in response.text
+    assert response.headers["cache-control"] == "no-store"
